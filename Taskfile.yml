@@ -1,0 +1,150 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: "3"
+
+vars:
+  BIN_DIR: ~/.local/bin
+  BIN_PATH: "{{.BIN_DIR}}/gitpr"
+  UAT_DIR: .tmp/uat
+  UAT_REPO: "{{.UAT_DIR}}/repo"
+  UAT_FEATURE: "{{.UAT_DIR}}/feature"
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+    silent: true
+
+  build:
+    desc: Build the gitpr CLI into ~/.local/bin/gitpr
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - VERSION="$(tagver)"; go build -ldflags "-X main.version=$VERSION" -o {{.BIN_PATH}} ./cmd/gitpr
+
+  version:
+    desc: Print the calculated release version
+    cmds:
+      - tagver
+
+  version:json:
+    desc: Print the calculated release version as JSON
+    cmds:
+      - tagver --format json
+
+  test:
+    desc: Run the Go test suite
+    cmds:
+      - go test ./...
+
+  release:
+    desc: Show release tasks
+    cmds:
+      - task --list | rg "release:"
+    silent: true
+
+  release:check:
+    desc: Validate the GoReleaser configuration
+    cmds:
+      - goreleaser check
+
+  release:snapshot:
+    desc: Build snapshot release artifacts into ./dist
+    cmds:
+      - goreleaser release --snapshot --clean
+
+  uat:
+    desc: Show UAT tasks
+    cmds:
+      - task --list | rg "uat:"
+    silent: true
+
+  uat:clean:
+    desc: Remove the disposable UAT repo and worktree under .tmp/uat
+    cmds:
+      - rm -rf {{.UAT_DIR}}
+
+  uat:paths:
+    desc: Print the current UAT paths
+    cmds:
+      - |
+        printf "Repo:      %s\n" "$PWD/{{.UAT_REPO}}"
+        printf "Worktree:  %s\n" "$PWD/{{.UAT_FEATURE}}"
+        printf "Binary:    %s\n" "$HOME/.local/bin/gitpr"
+
+  uat:setup:
+    desc: Create a disposable UAT repo and feature worktree under .tmp/uat
+    deps:
+      - build
+      - uat:clean
+    cmds:
+      - mkdir -p {{.UAT_REPO}}
+      - git init -b main {{.UAT_REPO}}
+      - git -C {{.UAT_REPO}} config user.name tester
+      - git -C {{.UAT_REPO}} config user.email tester@example.com
+      - printf "base\n" > {{.UAT_REPO}}/app.txt
+      - mkdir -p {{.UAT_REPO}}/config {{.UAT_REPO}}/web
+      - |
+        cat > {{.UAT_REPO}}/config/app.yaml <<'EOF'
+        app:
+          name: gitpr-uat
+          environment: dev
+        review:
+          required: false
+          owners:
+            - platform
+        EOF
+      - |
+        cat > {{.UAT_REPO}}/web/main.ts <<'EOF'
+        export function greet(name: string): string {
+          return `hello, ${name}`;
+        }
+
+        console.log(greet("world"));
+        EOF
+      - git -C {{.UAT_REPO}} add app.txt
+      - git -C {{.UAT_REPO}} add config/app.yaml web/main.ts
+      - git -C {{.UAT_REPO}} commit -m "base"
+      - git -C {{.UAT_REPO}} worktree add -b feature "$PWD/{{.UAT_FEATURE}}" HEAD
+      - printf "feature\n" >> {{.UAT_FEATURE}}/app.txt
+      - |
+        cat > {{.UAT_FEATURE}}/config/app.yaml <<'EOF'
+        app:
+          name: gitpr-uat
+          environment: test
+        review:
+          required: true
+          owners:
+            - platform
+            - qa
+        EOF
+      - |
+        cat > {{.UAT_FEATURE}}/web/main.ts <<'EOF'
+        export function greet(name: string): string {
+          return `hello, ${name}!`;
+        }
+
+        export function sum(a: number, b: number): number {
+          return a + b;
+        }
+
+        console.log(greet("world"));
+        EOF
+      - git -C {{.UAT_FEATURE}} add app.txt
+      - git -C {{.UAT_FEATURE}} add config/app.yaml web/main.ts
+      - git -C {{.UAT_FEATURE}} commit -m "feature change"
+      - |
+        printf "\nUAT environment ready.\n\n"
+        printf "Repo:      %s\n" "$PWD/{{.UAT_REPO}}"
+        printf "Worktree:  %s\n" "$PWD/{{.UAT_FEATURE}}"
+        printf "Binary:    %s\n\n" "$HOME/.local/bin/gitpr"
+        printf "Suggested next steps:\n"
+        printf "  cd %s\n" "$PWD/{{.UAT_FEATURE}}"
+        printf "  gitpr create --title \"Feature PR\" --description \"UAT run\"\n"
+        printf "  cd %s\n" "$PWD/{{.UAT_REPO}}"
+        printf "  gitpr list --status open\n"
+
+  uat:reset:
+    desc: Recreate the disposable UAT repo and worktree from scratch
+    deps:
+      - uat:setup

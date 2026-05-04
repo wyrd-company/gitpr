@@ -1,0 +1,72 @@
+version: 2
+
+project_name: gitpr
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: gitpr
+    main: ./cmd/gitpr
+    binary: gitpr
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: gitpr
+    ids:
+      - gitpr
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  github:
+    owner: wyrd-company
+    name: gitpr
+
+changelog:
+  sort: asc
+
+brews:
+  - name: gitpr
+    ids:
+      - gitpr
+    homepage: https://github.com/wyrd-company/gitpr
+    description: Review local git worktree branches as lightweight PRs
+    directory: Formula
+    repository:
+      owner: wyrd-company
+      name: homebrew-tap
+      branch: main
+      git:
+        url: "ssh://git\u0040github.com/wyrd-company/homebrew-tap.git"
+        private_key: "{{ .Env.FORMULAE_PUBLISH_KEY }}"
+    commit_author:
+      name: gitpr release bot
+      email: "41898282+github-actions[bot]@users.noreply.github.com"
+    install: |
+      bin.install "gitpr"
+    test: |
+      system "#{bin}/gitpr", "--version"
