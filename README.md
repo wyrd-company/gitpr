@@ -58,14 +58,12 @@ go install github.com/wyrd-company/gitpr/cmd/gitpr@latest
 
 Release builds are published to GitHub Releases.
 
-Homebrew is wired for a separate tap repository:
+Homebrew is wired for the `wyrd-company/homebrew-tools` repository:
 
 ```bash
-brew tap wyrd-company/tap
+brew tap wyrd-company/tools
 brew install gitpr
 ```
-
-That assumes a tap repo named `wyrd-company/homebrew-tap` exists, has a write-enabled deploy key configured, and this source repo has an organization or repository secret named `FORMULAE_PUBLISH_KEY` containing the matching private key.
 
 ## Commands
 

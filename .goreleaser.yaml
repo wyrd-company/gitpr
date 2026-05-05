@@ -58,10 +58,10 @@ brews:
     directory: Formula
     repository:
       owner: wyrd-company
-      name: homebrew-tap
+      name: homebrew-tools
       branch: main
       git:
-        url: "ssh://git\u0040github.com/wyrd-company/homebrew-tap.git"
+        url: "ssh://git\u0040github.com/wyrd-company/homebrew-tools.git"
         private_key: "{{ .Env.FORMULAE_PUBLISH_KEY }}"
     commit_author:
       name: gitpr release bot
