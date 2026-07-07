@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -28,6 +30,9 @@ func main() {
 	rootCmd.AddCommand(newShowCmd())
 	rootCmd.AddCommand(newCommentsCmd())
 	rootCmd.AddCommand(newCommentCmd())
+	rootCmd.AddCommand(newRefreshCmd())
+	rootCmd.AddCommand(newRejectCmd())
+	rootCmd.AddCommand(newMergeCmd())
 	rootCmd.AddCommand(newDebugCmd())
 	rootCmd.AddCommand(newTUICmd())
 
@@ -295,6 +300,118 @@ func newCommentCmd() *cobra.Command {
 	cmd.Flags().StringVar(&commitSHA, "commit", "", "Optional commit SHA")
 
 	return cmd
+}
+
+func newRefreshCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "refresh <pr-id>",
+		Short: "Refresh merge-conflict metadata for an open PR",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := app.NewService(".")
+			if err != nil {
+				return err
+			}
+
+			pr, _, err := svc.LoadPR(args[0])
+			if err != nil {
+				return err
+			}
+
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+
+			pr, err = svc.RefreshConflicts(ctx, pr)
+			if err != nil {
+				return err
+			}
+
+			if len(pr.MergeConflicts) == 0 {
+				fmt.Printf("PR %s has no merge conflicts\n", shortID(pr.ID))
+				return nil
+			}
+
+			fmt.Printf("PR %s has %d merge conflict(s):\n", shortID(pr.ID), len(pr.MergeConflicts))
+			for _, conflict := range pr.MergeConflicts {
+				if strings.TrimSpace(conflict.Path) != "" {
+					fmt.Printf("- %s: %s\n", conflict.Path, conflict.Message)
+				} else {
+					fmt.Printf("- %s\n", conflict.Message)
+				}
+			}
+			return nil
+		},
+	}
+
+	return cmd
+}
+
+func newRejectCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "reject <pr-id>",
+		Aliases: []string{"request-changes"},
+		Short:   "Close an open PR as rejected",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := app.NewService(".")
+			if err != nil {
+				return err
+			}
+
+			pr, ref, err := svc.RejectPR(args[0])
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("Rejected PR %s at %s\n", shortID(pr.ID), ref)
+			return nil
+		},
+	}
+
+	return cmd
+}
+
+func newMergeCmd() *cobra.Command {
+	var cleanup bool
+
+	cmd := &cobra.Command{
+		Use:     "merge <pr-id>",
+		Aliases: []string{"approve"},
+		Short:   "Merge an open PR into its base branch and mark it approved",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := app.NewService(".")
+			if err != nil {
+				return err
+			}
+
+			ctx, cancel := context.WithTimeout(cmd.Context(), 60*time.Second)
+			defer cancel()
+
+			pr, ref, err := svc.MergePR(ctx, args[0], cleanup)
+			if err != nil {
+				if pr.ID != "" && ref != "" {
+					printMergeSuccess(pr, ref, cleanup)
+					fmt.Fprintf(os.Stderr, "Cleanup failed after merge: %v\n", err)
+					return nil
+				}
+				return err
+			}
+
+			printMergeSuccess(pr, ref, cleanup)
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVar(&cleanup, "cleanup", false, "Remove the source worktree and branch after a successful merge")
+	return cmd
+}
+
+func printMergeSuccess(pr model.PR, ref string, cleanup bool) {
+	fmt.Printf("Merged PR %s into %s at %s\n", shortID(pr.ID), pr.BaseBranch, ref)
+	if !cleanup {
+		fmt.Println("Source worktree kept.")
+	}
 }
 
 func newDebugCmd() *cobra.Command {

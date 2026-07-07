@@ -151,6 +151,31 @@ gitpr comment 01K0ABCDEFGH \
   --commit abc1234
 ```
 
+Refresh merge-conflict metadata without opening the TUI:
+
+```bash
+gitpr refresh 01K0ABCDEFGH
+```
+
+Request changes from the CLI:
+
+```bash
+gitpr reject 01K0ABCDEFGH
+# or
+gitpr request-changes 01K0ABCDEFGH
+```
+
+Merge and mark approved from the CLI:
+
+```bash
+gitpr merge 01K0ABCDEFGH
+# or
+gitpr approve 01K0ABCDEFGH
+
+# Remove the source worktree and branch after merge:
+gitpr merge 01K0ABCDEFGH --cleanup
+```
+
 Launch the TUI:
 
 ```bash
