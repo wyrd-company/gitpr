@@ -233,8 +233,7 @@ func (s *Service) MergePR(ctx context.Context, id string, cleanup bool) (model.P
 		return model.PR{}, "", errors.New("merge conflicts detected; PR cannot be merged")
 	}
 
-	mergeMessage := fmt.Sprintf("Merge PR %s from %s", pr.ID, pr.SourceBranch)
-	if err := repo.MergeBranch(ctx, pr.BaseBranch, pr.SourceHeadSHA, mergeMessage); err != nil {
+	if err := repo.MergeBranch(ctx, pr.BaseBranch, pr.SourceHeadSHA); err != nil {
 		return model.PR{}, "", err
 	}
 

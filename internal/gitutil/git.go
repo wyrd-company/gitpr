@@ -229,7 +229,7 @@ func (r *Repo) DetectMergeConflicts(ctx context.Context, baseBranch, sourceBranc
 	return nil, nil
 }
 
-func (r *Repo) MergeBranch(ctx context.Context, baseBranch, sourceRef, message string) error {
+func (r *Repo) MergeBranch(ctx context.Context, baseBranch, sourceRef string) error {
 	tmpDir, err := os.MkdirTemp("", "gitpr-merge-*")
 	if err != nil {
 		return err
@@ -243,20 +243,7 @@ func (r *Repo) MergeBranch(ctx context.Context, baseBranch, sourceRef, message s
 		_, _ = runGit(context.Background(), r.WorktreePath, "worktree", "remove", "--force", tmpDir)
 	}()
 
-	env, err := mergeEnv(ctx, r.WorktreePath)
-	if err != nil {
-		return err
-	}
-
-	mergeArgs := []string{"merge", "--no-ff"}
-	if strings.TrimSpace(message) != "" {
-		mergeArgs = append(mergeArgs, "-m", message)
-	} else {
-		mergeArgs = append(mergeArgs, "--no-edit")
-	}
-	mergeArgs = append(mergeArgs, sourceRef)
-
-	if _, err := runGitWithEnv(ctx, tmpDir, env, mergeArgs...); err != nil {
+	if _, err := runGit(ctx, tmpDir, "merge", "--ff-only", sourceRef); err != nil {
 		return fmt.Errorf("merge branch: %w", err)
 	}
 
@@ -462,29 +449,6 @@ func parseMergeConflicts(output string) []model.MergeConflict {
 	})
 
 	return conflicts
-}
-
-func mergeEnv(ctx context.Context, dir string) ([]string, error) {
-	name, _ := runGit(ctx, dir, "config", "user.name")
-	email, _ := runGit(ctx, dir, "config", "user.email")
-
-	name = strings.TrimSpace(name)
-	email = strings.TrimSpace(email)
-	if name == "" {
-		name = "gitpr"
-	}
-	if email == "" {
-		email = "gitpr@local"
-	}
-
-	env := os.Environ()
-	env = append(env,
-		"GIT_AUTHOR_NAME="+name,
-		"GIT_AUTHOR_EMAIL="+email,
-		"GIT_COMMITTER_NAME="+name,
-		"GIT_COMMITTER_EMAIL="+email,
-	)
-	return env, nil
 }
 
 func runGit(ctx context.Context, dir string, args ...string) (string, error) {
