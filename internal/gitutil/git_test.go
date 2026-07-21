@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestMergeBranchFastForwardsBase(t *testing.T) {
+func TestMergeBranchFastForwardsUncheckedBase(t *testing.T) {
 	repoPath := newTestRepo(t)
 	baseSHA := testGit(t, repoPath, "rev-parse", "main")
 
@@ -18,7 +18,7 @@ func TestMergeBranchFastForwardsBase(t *testing.T) {
 	testGit(t, repoPath, "add", "feature.txt")
 	testGit(t, repoPath, "commit", "-m", "feature")
 	featureSHA := testGit(t, repoPath, "rev-parse", "HEAD")
-	testGit(t, repoPath, "checkout", "main")
+	testGit(t, repoPath, "checkout", "-b", "holding", "main")
 
 	repo, err := Open(repoPath)
 	if err != nil {
@@ -135,8 +135,8 @@ func TestMergeBranchRefusesBeforeAdvancingBaseWhenLocalChangeConflicts(t *testin
 		t.Fatal(err)
 	}
 	err = repo.MergeBranch(context.Background(), "main", featureSHA)
-	if err == nil || !strings.Contains(err.Error(), "local changes") {
-		t.Fatalf("MergeBranch() error = %v, want actionable local changes error", err)
+	if err == nil || !strings.Contains(err.Error(), "merge branch in checked-out base worktree") {
+		t.Fatalf("MergeBranch() error = %v, want checked-out base worktree error", err)
 	}
 
 	if got := testGit(t, repoPath, "rev-parse", "main"); got != baseSHA {
@@ -144,6 +144,34 @@ func TestMergeBranchRefusesBeforeAdvancingBaseWhenLocalChangeConflicts(t *testin
 	}
 	if got := readTestFile(t, repoPath, "base.txt"); got != "uncommitted local change\n" {
 		t.Fatalf("conflicting local change = %q, want preserved contents", got)
+	}
+}
+
+func TestMergeBranchRefusesBeforeOverwritingUntrackedFile(t *testing.T) {
+	repoPath := newTestRepo(t)
+	baseSHA := testGit(t, repoPath, "rev-parse", "main")
+	featurePath := filepath.Join(t.TempDir(), "feature")
+	testGit(t, repoPath, "worktree", "add", "-b", "feature", featurePath, "HEAD")
+	writeTestFile(t, featurePath, "collision.txt", "feature contents\n")
+	testGit(t, featurePath, "add", "collision.txt")
+	testGit(t, featurePath, "commit", "-m", "add collision file")
+	featureSHA := testGit(t, featurePath, "rev-parse", "HEAD")
+
+	writeTestFile(t, repoPath, "collision.txt", "untracked local contents\n")
+	repo, err := Open(featurePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = repo.MergeBranch(context.Background(), "main", featureSHA)
+	if err == nil {
+		t.Fatal("MergeBranch() error = nil, want untracked-file collision error")
+	}
+
+	if got := testGit(t, repoPath, "rev-parse", "main"); got != baseSHA {
+		t.Fatalf("main changed to %s after rejected merge; want %s", got, baseSHA)
+	}
+	if got := readTestFile(t, repoPath, "collision.txt"); got != "untracked local contents\n" {
+		t.Fatalf("untracked local file = %q, want preserved contents", got)
 	}
 }
 
@@ -202,7 +230,7 @@ func TestMergeBranchThenCleanupRemovesSourceWorktreeAndBranch(t *testing.T) {
 	}
 }
 
-func TestMergeBranchRejectsNonFastForward(t *testing.T) {
+func TestMergeBranchRejectsNonFastForwardForUncheckedBase(t *testing.T) {
 	repoPath := newTestRepo(t)
 
 	testGit(t, repoPath, "checkout", "-b", "feature")
@@ -216,6 +244,7 @@ func TestMergeBranchRejectsNonFastForward(t *testing.T) {
 	testGit(t, repoPath, "add", "main.txt")
 	testGit(t, repoPath, "commit", "-m", "main")
 	mainSHA := testGit(t, repoPath, "rev-parse", "HEAD")
+	testGit(t, repoPath, "checkout", "-b", "holding")
 
 	repo, err := Open(repoPath)
 	if err != nil {
