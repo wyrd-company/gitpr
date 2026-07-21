@@ -274,6 +274,8 @@ closed_at: 2026-04-25T00:05:00Z
 - Default branch detection prefers `origin/HEAD`, then `main`, then `master`
 - Merge conflict detection is saved into the PR YAML
 - Merge writes directly into the local base branch using the reviewed `source_head_sha`
+- When the base branch is checked out, merge synchronizes that worktree and refuses before advancing the branch if local changes would be overwritten
+- If the base branch was forcibly checked out in multiple worktrees, detach it in all but one before merging
 - `debug export` is the intended way to inspect ref-backed state on disk
 
 ## UAT
@@ -341,7 +343,10 @@ From the TUI, merge the PR and choose whether to clean up the source worktree. T
 /workspaces/gitpr/gitpr list --status approved
 git log --oneline --graph --decorate --all
 git for-each-ref "refs/gitpr/*"
+git status --short
 ```
+
+The base worktree should contain the merged files and `git status --short` should produce no output unless the worktree had unrelated local changes before the merge.
 
 7. Verify conflict blocking.
 

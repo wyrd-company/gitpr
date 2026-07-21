@@ -230,6 +230,23 @@ func (r *Repo) DetectMergeConflicts(ctx context.Context, baseBranch, sourceBranc
 }
 
 func (r *Repo) MergeBranch(ctx context.Context, baseBranch, sourceRef string) error {
+	baseWorktrees, err := r.worktreesForBranch(ctx, baseBranch)
+	if err != nil {
+		return fmt.Errorf("find worktrees for %s: %w", baseBranch, err)
+	}
+	if len(baseWorktrees) > 1 {
+		return fmt.Errorf(
+			"base branch %s is checked out in multiple worktrees; detach it in all but one before merging so gitpr can synchronize it safely",
+			baseBranch,
+		)
+	}
+	if len(baseWorktrees) == 1 {
+		if _, err := runGit(ctx, baseWorktrees[0], "merge", "--ff-only", sourceRef); err != nil {
+			return fmt.Errorf("merge branch in checked-out base worktree %s: %w", baseWorktrees[0], err)
+		}
+		return nil
+	}
+
 	tmpDir, err := os.MkdirTemp("", "gitpr-merge-*")
 	if err != nil {
 		return err
@@ -252,6 +269,33 @@ func (r *Repo) MergeBranch(ctx context.Context, baseBranch, sourceRef string) er
 	}
 
 	return nil
+}
+
+func (r *Repo) worktreesForBranch(ctx context.Context, branch string) ([]string, error) {
+	out, err := runGit(ctx, r.WorktreePath, "worktree", "list", "--porcelain", "-z")
+	if err != nil {
+		return nil, err
+	}
+
+	targetRef := "refs/heads/" + branch
+	var worktrees []string
+	for _, record := range strings.Split(out, "\x00\x00") {
+		var path string
+		var branchRef string
+		for _, field := range strings.Split(record, "\x00") {
+			switch {
+			case strings.HasPrefix(field, "worktree "):
+				path = strings.TrimPrefix(field, "worktree ")
+			case strings.HasPrefix(field, "branch "):
+				branchRef = strings.TrimPrefix(field, "branch ")
+			}
+		}
+		if path != "" && branchRef == targetRef {
+			worktrees = append(worktrees, path)
+		}
+	}
+
+	return worktrees, nil
 }
 
 func (r *Repo) CleanupSourceWorktree(ctx context.Context, sourceWorktreePath, sourceBranch string) error {
