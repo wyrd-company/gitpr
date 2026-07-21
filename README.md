@@ -2,6 +2,8 @@
 
 `gitpr` is a local Go CLI/TUI for reviewing worktree branches as lightweight pull requests against the local default branch.
 
+![gitpr local review demo](docs/assets/demo.gif)
+
 ## What It Does
 
 - Stores PR snapshots in Git refs under `refs/gitpr/...`

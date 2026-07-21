@@ -1,0 +1,15 @@
+name: gitpr
+tagline: Review worktree branches as local pull requests.
+blurb: >-
+  A local Go CLI and TUI that turns worktree branches into lightweight pull
+  requests against your local default branch — no server, no remote, no forge.
+category: Git & Review
+language: Go
+status: stable
+repo: https://github.com/wyrd-company/gitpr
+order: 1
+install:
+  - label: Homebrew
+    command: brew install wyrd-company/tools/gitpr
+assets:
+  - assets/demo.gif
