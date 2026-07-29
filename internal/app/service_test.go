@@ -161,6 +161,7 @@ func TestMergePRMergesMatchingSourceHeadAndCleansUp(t *testing.T) {
 
 func TestMergePRRefusesMovedSourceHead(t *testing.T) {
 	repoPath, featurePath, service, pr := newMergeTestPR(t)
+	testGit(t, repoPath, "tag", "feature", pr.SourceHeadSHA)
 	writeTestFile(t, featurePath, "follow-up.txt", "follow-up\n")
 	testGit(t, featurePath, "add", "follow-up.txt")
 	testGit(t, featurePath, "commit", "-m", "follow-up")
