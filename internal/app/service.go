@@ -231,7 +231,7 @@ func (s *Service) MergePR(ctx context.Context, id string, cleanup bool) (model.P
 		)
 	}
 
-	currentSourceHeadSHA, err := repo.HeadSHA(ctx, pr.SourceBranch)
+	currentSourceHeadSHA, err := repo.HeadSHA(ctx, "refs/heads/"+pr.SourceBranch)
 	if err != nil {
 		return model.PR{}, "", fmt.Errorf("resolve source branch %q: %w", pr.SourceBranch, err)
 	}
