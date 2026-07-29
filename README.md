@@ -178,6 +178,10 @@ gitpr approve 01K0ABCDEFGH
 gitpr merge 01K0ABCDEFGH --cleanup
 ```
 
+Merge refuses if the source branch was deleted or moved past the reviewed
+`source_head_sha`. Reject the stale PR and create a new PR from the current
+branch head so the revised snapshot receives review.
+
 Launch the TUI:
 
 ```bash
