@@ -37,6 +37,13 @@ tasks:
     cmds:
       - go test ./...
 
+  check:
+    desc: Run formatting, static analysis, and tests
+    cmds:
+      - test -z "$(gofmt -l .)"
+      - go vet ./...
+      - go test ./...
+
   release:
     desc: Show release tasks
     cmds:

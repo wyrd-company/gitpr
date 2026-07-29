@@ -248,6 +248,32 @@ func (s *Service) MergePR(ctx context.Context, id string, cleanup bool) (model.P
 		return model.PR{}, "", err
 	}
 
+	sourceBranchExists, err := repo.BranchExists(ctx, pr.SourceBranch)
+	if err != nil {
+		return model.PR{}, "", fmt.Errorf("check source branch %q: %w", pr.SourceBranch, err)
+	}
+	if !sourceBranchExists {
+		return model.PR{}, "", fmt.Errorf(
+			"source branch %q no longer exists; reject PR %s and create a new PR from the current head",
+			pr.SourceBranch,
+			pr.ID,
+		)
+	}
+
+	currentSourceHeadSHA, err := repo.HeadSHA(ctx, pr.SourceBranch)
+	if err != nil {
+		return model.PR{}, "", fmt.Errorf("resolve source branch %q: %w", pr.SourceBranch, err)
+	}
+	if currentSourceHeadSHA != pr.SourceHeadSHA {
+		return model.PR{}, "", fmt.Errorf(
+			"source branch %q moved from reviewed snapshot %s to current head %s; reject PR %s and create a new PR from the current head",
+			pr.SourceBranch,
+			pr.SourceHeadSHA,
+			currentSourceHeadSHA,
+			pr.ID,
+		)
+	}
+
 	conflicts, err := repo.DetectMergeConflicts(ctx, pr.BaseBranch, pr.SourceHeadSHA)
 	if err != nil {
 		return model.PR{}, "", err
