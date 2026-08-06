@@ -88,7 +88,7 @@ type Model struct {
 	diffOffset             int
 	selectAnchor           int
 	expandedComments       map[string]bool
-	editingExistingComment bool
+	editingCommentIndex int
 	inputBuffer            strings.Builder
 	infoMessage            string
 	errMessage             string
@@ -322,12 +322,12 @@ func (m *Model) handleDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = modeCommentInput
 			m.inputBuffer.Reset()
 			m.errMessage = ""
-			m.editingExistingComment = false
+			m.editingCommentIndex = -1
 
-			if comment, ok := m.exactCommentForTarget(target); ok {
+			if comment, idx, ok := m.exactCommentForTarget(target); ok {
 				m.inputBuffer.WriteString(comment.Comment)
 				m.infoMessage = "Editing comment: Enter adds a new line, Ctrl+S saves, Esc cancels."
-				m.editingExistingComment = true
+				m.editingCommentIndex = idx
 			} else {
 				m.infoMessage = "New comment: Enter adds a new line, Ctrl+S saves, Esc cancels."
 			}
@@ -359,7 +359,7 @@ func (m *Model) handleCommentInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.mode = modeBrowse
 		m.infoMessage = ""
-		m.editingExistingComment = false
+		m.editingCommentIndex = -1
 		return m, nil
 	case "backspace":
 		current := []rune(m.inputBuffer.String())
@@ -386,9 +386,9 @@ func (m *Model) handleCommentInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		m.mode = modeBrowse
 		m.inputBuffer.Reset()
-		updated := m.editingExistingComment
-		m.editingExistingComment = false
-		return m, m.addCommentCmd(m.currentPR.ID, comment, updated)
+		commentIndex := m.editingCommentIndex
+		m.editingCommentIndex = -1
+		return m, m.addCommentCmd(m.currentPR.ID, comment, commentIndex)
 	case "enter":
 		m.inputBuffer.WriteString("\n")
 		return m, nil
@@ -561,14 +561,22 @@ func (m *Model) loadPRCmd(id string) tea.Cmd {
 	}
 }
 
-func (m *Model) addCommentCmd(id string, comment model.Comment, updated bool) tea.Cmd {
+func (m *Model) addCommentCmd(id string, comment model.Comment, commentIndex int) tea.Cmd {
 	return func() tea.Msg {
-		pr, err := m.svc.AddComment(id, comment)
+		var (
+			pr  model.PR
+			err error
+		)
+		if commentIndex >= 0 {
+			pr, err = m.svc.UpdateComment(id, commentIndex, comment)
+		} else {
+			pr, err = m.svc.AddComment(id, comment)
+		}
 		if err != nil {
 			return actionResultMsg{err: err}
 		}
 		action := "Saved"
-		if updated {
+		if commentIndex >= 0 {
 			action = "Updated"
 		}
 		return actionResultMsg{
@@ -699,13 +707,13 @@ func (m *Model) commentTarget() (commentTarget, bool) {
 	return target, target.filePath != ""
 }
 
-func (m *Model) exactCommentForTarget(target commentTarget) (model.Comment, bool) {
-	for _, comment := range m.currentPR.Comments {
+func (m *Model) exactCommentForTarget(target commentTarget) (model.Comment, int, bool) {
+	for idx, comment := range m.currentPR.Comments {
 		if comment.FilePath == target.filePath && comment.LineStart == target.lineStart && comment.LineEnd == target.lineEnd {
-			return comment, true
+			return comment, idx, true
 		}
 	}
-	return model.Comment{}, false
+	return model.Comment{}, -1, false
 }
 
 func (m *Model) toggleCommentsForSelection() bool {

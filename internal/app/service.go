@@ -156,22 +156,42 @@ func (s *Service) AddComment(id string, comment model.Comment) (model.PR, error)
 		return model.PR{}, errors.New("comment text is required")
 	}
 
-	updated := false
-	for idx, existing := range pr.Comments {
-		if existing.FilePath == comment.FilePath && existing.LineStart == comment.LineStart && existing.LineEnd == comment.LineEnd {
-			comment.CreatedAt = existing.CreatedAt
-			if comment.CommitSHA == "" {
-				comment.CommitSHA = existing.CommitSHA
-			}
-			pr.Comments[idx] = comment
-			updated = true
-			break
-		}
+	comment.CreatedAt = time.Now().UTC()
+	pr.Comments = append(pr.Comments, comment)
+
+	pr.UpdatedAt = time.Now().UTC()
+	if _, err := s.store.SavePR(pr, pr.Status); err != nil {
+		return model.PR{}, err
 	}
-	if !updated {
-		comment.CreatedAt = time.Now().UTC()
-		pr.Comments = append(pr.Comments, comment)
+
+	return pr, nil
+}
+
+func (s *Service) UpdateComment(id string, commentIndex int, comment model.Comment) (model.PR, error) {
+	pr, _, err := s.store.LoadPR(id)
+	if err != nil {
+		return model.PR{}, err
 	}
+
+	if pr.Status != model.StatusOpen {
+		return model.PR{}, errors.New("cannot comment on a closed PR")
+	}
+
+	comment.Comment = strings.TrimSpace(comment.Comment)
+	if comment.Comment == "" {
+		return model.PR{}, errors.New("comment text is required")
+	}
+
+	if commentIndex < 0 || commentIndex >= len(pr.Comments) {
+		return model.PR{}, fmt.Errorf("comment index %d is out of range", commentIndex)
+	}
+
+	existing := pr.Comments[commentIndex]
+	comment.CreatedAt = existing.CreatedAt
+	if comment.CommitSHA == "" {
+		comment.CommitSHA = existing.CommitSHA
+	}
+	pr.Comments[commentIndex] = comment
 
 	pr.UpdatedAt = time.Now().UTC()
 	if _, err := s.store.SavePR(pr, pr.Status); err != nil {

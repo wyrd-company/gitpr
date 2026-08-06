@@ -10,7 +10,7 @@ order: 4
 | `gitpr list` | List PRs, filtered by `--status` (open by default) |
 | `gitpr show [id]` | Print a PR as YAML; opens a picker when no ID is given |
 | `gitpr comments [id]` | Print only a PR's review comments; opens a picker when no ID is given |
-| `gitpr comment <id>` | Add a review comment to an open PR |
+| `gitpr comment <id>` | Add a review comment to an open PR (appends when the anchor already has comments) |
 | `gitpr refresh <id>` | Recompute merge-conflict metadata for an open PR |
 | `gitpr reject <id>` | Close an open PR as rejected (alias `request-changes`) |
 | `gitpr merge <id>` | Merge an open PR into its base branch and mark it approved (alias `approve`, `--cleanup` optional) |

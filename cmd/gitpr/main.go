@@ -251,7 +251,7 @@ func newCommentCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "comment <pr-id>",
-		Short: "Add a review comment to an open PR",
+		Short: "Add a review comment to an open PR (appends at the same anchor)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if strings.TrimSpace(filePath) == "" {
