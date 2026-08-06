@@ -79,28 +79,30 @@ type Model struct {
 	width  int
 	height int
 
-	openPRs                []model.PR
-	listCursor             int
-	currentPR              model.PR
-	currentRows            []diffRow
-	highlightCache         map[string]fileHighlight
-	diffCursor             int
-	diffOffset             int
-	selectAnchor           int
-	expandedComments       map[string]bool
+	openPRs             []model.PR
+	listCursor          int
+	currentPR           model.PR
+	currentRows         []diffRow
+	highlightCache      map[string]fileHighlight
+	diffCursor          int
+	diffOffset          int
+	selectAnchor        int
+	expandedComments    map[string]bool
 	editingCommentIndex int
-	inputBuffer            strings.Builder
-	infoMessage            string
-	errMessage             string
+	commentCycle        commentCycleState
+	inputBuffer         strings.Builder
+	infoMessage         string
+	errMessage          string
 }
 
 func Run(svc *app.Service) error {
 	m := &Model{
-		svc:              svc,
-		screen:           listScreen,
-		mode:             modeBrowse,
-		expandedComments: map[string]bool{},
-		selectAnchor:     -1,
+		svc:                 svc,
+		screen:              listScreen,
+		mode:                modeBrowse,
+		expandedComments:    map[string]bool{},
+		selectAnchor:        -1,
+		editingCommentIndex: -1,
 	}
 
 	// Force a color-capable renderer for the TUI even when the parent shell is
@@ -171,6 +173,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.diffCursor = 0
 		m.diffOffset = 0
 		m.selectAnchor = -1
+		m.editingCommentIndex = -1
+		m.commentCycle = commentCycleState{}
 		m.infoMessage = ""
 		m.errMessage = ""
 		return m, nil
@@ -207,6 +211,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.infoMessage = msg.message
 		m.errMessage = ""
 		m.mode = modeBrowse
+		if strings.HasPrefix(msg.message, "Saved comment") || strings.HasPrefix(msg.message, "Updated comment") {
+			m.editingCommentIndex = -1
+			m.commentCycle = commentCycleState{}
+		}
 		if m.currentPR.Status != model.StatusOpen {
 			m.screen = listScreen
 			return m, m.loadOpenPRsCmd()
@@ -324,12 +332,22 @@ func (m *Model) handleDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.errMessage = ""
 			m.editingCommentIndex = -1
 
-			if comment, idx, ok := m.exactCommentForTarget(target); ok {
-				m.inputBuffer.WriteString(comment.Comment)
-				m.infoMessage = "Editing comment: Enter adds a new line, Ctrl+S saves, Esc cancels."
-				m.editingCommentIndex = idx
-			} else {
+			matches := commentsAtExactTarget(m.currentPR.Comments, target)
+			var isNew bool
+			m.commentCycle, m.editingCommentIndex, isNew = advanceCommentCycle(m.commentCycle, target, matches)
+			switch {
+			case isNew && len(matches) == 0:
 				m.infoMessage = "New comment: Enter adds a new line, Ctrl+S saves, Esc cancels."
+			case isNew:
+				m.infoMessage = "New comment at anchor (appends): Enter adds a new line, Ctrl+S saves, Esc cancels."
+			default:
+				for _, match := range matches {
+					if match.index == m.editingCommentIndex {
+						m.inputBuffer.WriteString(match.comment.Comment)
+						break
+					}
+				}
+				m.infoMessage = "Editing comment: Enter adds a new line, Ctrl+S saves, Esc cancels."
 			}
 		}
 	case "o":
@@ -360,6 +378,7 @@ func (m *Model) handleCommentInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeBrowse
 		m.infoMessage = ""
 		m.editingCommentIndex = -1
+		m.commentCycle = commentCycleState{}
 		return m, nil
 	case "backspace":
 		current := []rune(m.inputBuffer.String())
@@ -705,15 +724,6 @@ func (m *Model) commentTarget() (commentTarget, bool) {
 	}
 
 	return target, target.filePath != ""
-}
-
-func (m *Model) exactCommentForTarget(target commentTarget) (model.Comment, int, bool) {
-	for idx, comment := range m.currentPR.Comments {
-		if comment.FilePath == target.filePath && comment.LineStart == target.lineStart && comment.LineEnd == target.lineEnd {
-			return comment, idx, true
-		}
-	}
-	return model.Comment{}, -1, false
 }
 
 func (m *Model) toggleCommentsForSelection() bool {

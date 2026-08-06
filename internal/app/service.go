@@ -142,18 +142,9 @@ func (s *Service) RefreshConflicts(ctx context.Context, pr model.PR) (model.PR, 
 }
 
 func (s *Service) AddComment(id string, comment model.Comment) (model.PR, error) {
-	pr, _, err := s.store.LoadPR(id)
+	pr, comment, err := s.loadOpenPRForComment(id, comment)
 	if err != nil {
 		return model.PR{}, err
-	}
-
-	if pr.Status != model.StatusOpen {
-		return model.PR{}, errors.New("cannot comment on a closed PR")
-	}
-
-	comment.Comment = strings.TrimSpace(comment.Comment)
-	if comment.Comment == "" {
-		return model.PR{}, errors.New("comment text is required")
 	}
 
 	comment.CreatedAt = time.Now().UTC()
@@ -168,18 +159,9 @@ func (s *Service) AddComment(id string, comment model.Comment) (model.PR, error)
 }
 
 func (s *Service) UpdateComment(id string, commentIndex int, comment model.Comment) (model.PR, error) {
-	pr, _, err := s.store.LoadPR(id)
+	pr, comment, err := s.loadOpenPRForComment(id, comment)
 	if err != nil {
 		return model.PR{}, err
-	}
-
-	if pr.Status != model.StatusOpen {
-		return model.PR{}, errors.New("cannot comment on a closed PR")
-	}
-
-	comment.Comment = strings.TrimSpace(comment.Comment)
-	if comment.Comment == "" {
-		return model.PR{}, errors.New("comment text is required")
 	}
 
 	if commentIndex < 0 || commentIndex >= len(pr.Comments) {
@@ -199,6 +181,24 @@ func (s *Service) UpdateComment(id string, commentIndex int, comment model.Comme
 	}
 
 	return pr, nil
+}
+
+func (s *Service) loadOpenPRForComment(id string, comment model.Comment) (model.PR, model.Comment, error) {
+	pr, _, err := s.store.LoadPR(id)
+	if err != nil {
+		return model.PR{}, model.Comment{}, err
+	}
+
+	if pr.Status != model.StatusOpen {
+		return model.PR{}, model.Comment{}, errors.New("cannot comment on a closed PR")
+	}
+
+	comment.Comment = strings.TrimSpace(comment.Comment)
+	if comment.Comment == "" {
+		return model.PR{}, model.Comment{}, errors.New("comment text is required")
+	}
+
+	return pr, comment, nil
 }
 
 func (s *Service) RejectPR(id string) (model.PR, string, error) {

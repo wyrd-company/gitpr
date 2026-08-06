@@ -248,6 +248,7 @@ func newCommentCmd() *cobra.Command {
 	var lineEnd int
 	var text string
 	var commitSHA string
+	var updateIndex int
 
 	cmd := &cobra.Command{
 		Use:   "comment <pr-id>",
@@ -269,6 +270,9 @@ func newCommentCmd() *cobra.Command {
 			if strings.TrimSpace(text) == "" {
 				return errors.New("--text is required")
 			}
+			if updateIndex < -1 {
+				return errors.New("--update must be greater than or equal to -1")
+			}
 
 			svc, err := app.NewService(".")
 			if err != nil {
@@ -283,7 +287,17 @@ func newCommentCmd() *cobra.Command {
 				CommitSHA: strings.TrimSpace(commitSHA),
 			}
 
-			pr, err := svc.AddComment(args[0], comment)
+			var pr model.PR
+			if updateIndex >= 0 {
+				pr, err = svc.UpdateComment(args[0], updateIndex, comment)
+				if err != nil {
+					return err
+				}
+				fmt.Printf("Updated comment %d on PR %s: %s:%d-%d\n", updateIndex, shortID(pr.ID), comment.FilePath, comment.LineStart, comment.LineEnd)
+				return nil
+			}
+
+			pr, err = svc.AddComment(args[0], comment)
 			if err != nil {
 				return err
 			}
@@ -298,6 +312,7 @@ func newCommentCmd() *cobra.Command {
 	cmd.Flags().IntVar(&lineEnd, "line-end", 0, "Ending line number (defaults to line-start)")
 	cmd.Flags().StringVar(&text, "text", "", "Comment text")
 	cmd.Flags().StringVar(&commitSHA, "commit", "", "Optional commit SHA")
+	cmd.Flags().IntVar(&updateIndex, "update", -1, "Replace the comment at this index instead of appending")
 
 	return cmd
 }
