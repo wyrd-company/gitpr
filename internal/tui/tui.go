@@ -65,9 +65,10 @@ type listLoadedMsg struct {
 }
 
 type actionResultMsg struct {
-	pr      model.PR
-	message string
-	err     error
+	pr           model.PR
+	message      string
+	commentSaved bool
+	err          error
 }
 
 type Model struct {
@@ -211,7 +212,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.infoMessage = msg.message
 		m.errMessage = ""
 		m.mode = modeBrowse
-		if strings.HasPrefix(msg.message, "Saved comment") || strings.HasPrefix(msg.message, "Updated comment") {
+		if msg.commentSaved {
 			m.editingCommentIndex = -1
 			m.commentCycle = commentCycleState{}
 		}
@@ -599,8 +600,9 @@ func (m *Model) addCommentCmd(id string, comment model.Comment, commentIndex int
 			action = "Updated"
 		}
 		return actionResultMsg{
-			pr:      pr,
-			message: fmt.Sprintf("%s comment on %s:%d-%d", action, comment.FilePath, comment.LineStart, comment.LineEnd),
+			pr:           pr,
+			message:      fmt.Sprintf("%s comment on %s:%d-%d", action, comment.FilePath, comment.LineStart, comment.LineEnd),
+			commentSaved: true,
 		}
 	}
 }

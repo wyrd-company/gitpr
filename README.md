@@ -153,6 +153,17 @@ gitpr comment 01K0ABCDEFGH \
   --commit abc1234
 ```
 
+Update an existing comment by index (anchor flags must match the stored comment):
+
+```bash
+gitpr comment 01K0ABCDEFGH \
+  --update 0 \
+  --file internal/tui/tui.go \
+  --line-start 120 \
+  --line-end 126 \
+  --text "Revised wording."
+```
+
 Refresh merge-conflict metadata without opening the TUI:
 
 ```bash
@@ -198,13 +209,13 @@ gitpr debug export 01K0ABCDEFGH --ref base --to /tmp/gitpr-base
 - `Enter`: open selected PR from the list
 - `Esc`: go back to the PR list
 - `v`: start or clear a block selection in the diff
-- `c`: add or edit a comment on the current line or selected block
+- `c`: cycle through comments at the current anchor, then append a new one on the current line or selected block
 - `o`: expand or collapse inline comments for the current line or selected block
 - `r`: request changes and mark the PR as `rejected`
 - `m`: merge if there are no merge conflicts
 - `q`: quit
 
-When editing a comment in the TUI, `Enter` inserts a newline, `Ctrl+S` saves, and `Esc` cancels.
+When commenting in the TUI, press `c` repeatedly on the same line to cycle through existing comments at that anchor before opening a new-comment buffer. `Enter` inserts a newline while editing, `Ctrl+S` saves, and `Esc` cancels.
 
 When merging from the TUI, the app asks whether the source worktree should also be cleaned up.
 

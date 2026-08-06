@@ -84,6 +84,46 @@ func TestUpdateCommentReplacesByIndex(t *testing.T) {
 	}
 }
 
+func TestUpdateCommentRejectsAnchorMismatch(t *testing.T) {
+	svc, pr := newTestPR(t)
+
+	original := model.Comment{
+		FilePath:  "app.txt",
+		LineStart: 2,
+		LineEnd:   2,
+		Comment:   "original text",
+	}
+	if _, err := svc.AddComment(pr.ID, original); err != nil {
+		t.Fatalf("AddComment() error = %v", err)
+	}
+
+	_, err := svc.UpdateComment(pr.ID, 0, model.Comment{
+		FilePath:  "elsewhere.txt",
+		LineStart: 99,
+		LineEnd:   99,
+		Comment:   "moved comment",
+	})
+	if err == nil {
+		t.Fatal("UpdateComment() error = nil, want anchor mismatch error")
+	}
+	if !strings.Contains(err.Error(), "anchor mismatch") {
+		t.Fatalf("UpdateComment() error = %v, want anchor mismatch error", err)
+	}
+
+	loaded, _, err := svc.LoadPR(pr.ID)
+	if err != nil {
+		t.Fatalf("LoadPR() error = %v", err)
+	}
+	if len(loaded.Comments) != 1 {
+		t.Fatalf("comment count = %d, want 1", len(loaded.Comments))
+	}
+	if loaded.Comments[0].FilePath != original.FilePath || loaded.Comments[0].LineStart != original.LineStart {
+		t.Fatalf("comment anchor changed to %s:%d-%d, want preserved %s:%d-%d",
+			loaded.Comments[0].FilePath, loaded.Comments[0].LineStart, loaded.Comments[0].LineEnd,
+			original.FilePath, original.LineStart, original.LineEnd)
+	}
+}
+
 func TestUpdateCommentRejectsInvalidIndex(t *testing.T) {
 	svc, pr := newTestPR(t)
 

@@ -169,6 +169,15 @@ func (s *Service) UpdateComment(id string, commentIndex int, comment model.Comme
 	}
 
 	existing := pr.Comments[commentIndex]
+	if existing.FilePath != comment.FilePath || existing.LineStart != comment.LineStart || existing.LineEnd != comment.LineEnd {
+		return model.PR{}, fmt.Errorf(
+			"comment anchor mismatch: index %d is anchored at %s:%d-%d, not %s:%d-%d",
+			commentIndex,
+			existing.FilePath, existing.LineStart, existing.LineEnd,
+			comment.FilePath, comment.LineStart, comment.LineEnd,
+		)
+	}
+
 	comment.CreatedAt = existing.CreatedAt
 	if comment.CommitSHA == "" {
 		comment.CommitSHA = existing.CommitSHA

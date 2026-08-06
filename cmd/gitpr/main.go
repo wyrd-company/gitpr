@@ -270,8 +270,8 @@ func newCommentCmd() *cobra.Command {
 			if strings.TrimSpace(text) == "" {
 				return errors.New("--text is required")
 			}
-			if updateIndex < -1 {
-				return errors.New("--update must be greater than or equal to -1")
+			if cmd.Flags().Changed("update") && updateIndex < 0 {
+				return errors.New("--update must be greater than or equal to 0")
 			}
 
 			svc, err := app.NewService(".")
