@@ -29,9 +29,11 @@ func main() {
 
 func newRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
-		Use:     "gitpr",
-		Short:   "Review local git worktree branches as lightweight PRs",
-		Version: version,
+		Use:           "gitpr",
+		Short:         "Review local git worktree branches as lightweight PRs",
+		Version:       version,
+		SilenceUsage:  true,
+		SilenceErrors: true,
 	}
 
 	rootCmd.AddCommand(newCreateCmd())

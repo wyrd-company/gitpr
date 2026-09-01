@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
@@ -224,17 +225,25 @@ func TestCloseReasonListingAndDeleteCommandsUseStdout(t *testing.T) {
 			}
 		}
 		previewCmd := newRootCmd()
-		var previewOut bytes.Buffer
+		var previewOut, previewErr bytes.Buffer
 		previewCmd.SetOut(&previewOut)
-		previewCmd.SetErr(&bytes.Buffer{})
+		previewCmd.SetErr(&previewErr)
 		previewCmd.SetArgs([]string{"delete", id})
-		if err := previewCmd.Execute(); err == nil || !strings.Contains(err.Error(), "--force") {
-			t.Fatalf("unguarded delete error=%v", err)
+		deleteErr := previewCmd.Execute()
+		if deleteErr == nil || !strings.Contains(deleteErr.Error(), "--force") {
+			t.Fatalf("unguarded delete error=%v", deleteErr)
+		}
+		if previewErr.Len() != 0 {
+			t.Fatalf("Cobra wrote refusal stderr=%q", previewErr.String())
 		}
 		for _, want := range []string{"Would delete PR", "state: closed", "events: 0", "threads: 0", "pinned review commits may become collectable"} {
 			if !strings.Contains(previewOut.String(), want) {
 				t.Errorf("delete preview missing %q: %s", want, previewOut.String())
 			}
+		}
+		fmt.Fprintln(&previewErr, deleteErr)
+		if got := previewErr.String(); strings.Count(got, "refusing to delete without --force") != 1 || strings.Contains(got, "Usage:") {
+			t.Fatalf("main-owned error output=%q", got)
 		}
 		st, err := store.New(dir)
 		if err != nil {
