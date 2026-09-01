@@ -151,6 +151,7 @@ func TestReviewPRReportsLatestEventInterdiffWithoutPersisting(t *testing.T) {
 	writeTestFile(t, repoPath, "later.txt", "later\n")
 	testGit(t, repoPath, "add", "later.txt")
 	testGit(t, repoPath, "commit", "-m", "later")
+	testGit(t, repoPath, "clean", "-fd")
 	_, metaBefore, _ := service.store.LoadPR2(pr.ID)
 	refsBefore := testGit(t, repoPath, "for-each-ref", "--format=%(refname) %(objectname)")
 	statusBefore := testGit(t, repoPath, "status", "--porcelain")
