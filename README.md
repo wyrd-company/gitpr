@@ -6,6 +6,65 @@ so every worktree and clone can use the same records without a server.
 
 ![gitpr local review demo](docs/assets/demo.gif)
 
+## Versioning
+
+This repo uses [`tagver`](https://github.com/wyrd-company/tagver) for tag-driven
+version calculation.
+
+- Release tags should use the `vX.Y.Z` format
+- `task build` embeds the current calculated version into `gitpr --version` when
+  `tagver` is installed
+- The release workflow validates that the pushed tag matches the
+  `tagver`-calculated version before publishing
+
+Helpful commands:
+
+```bash
+task version
+task version:json
+```
+
+## Installation
+
+Build from source locally:
+
+```bash
+task build
+gitpr --version
+```
+
+Install with Go:
+
+```bash
+go install github.com/wyrd-company/gitpr/cmd/gitpr@latest
+```
+
+Release builds are published to GitHub Releases.
+
+Homebrew is wired for the `wyrd-company/homebrew-tools` repository:
+
+```bash
+brew tap wyrd-company/tools
+brew install gitpr
+```
+
+Taskfile shortcuts:
+
+```bash
+task build
+task test
+task version
+task version:json
+task release
+task release:check
+task release:snapshot
+task uat
+task uat:setup
+task uat:clean
+task uat:paths
+task uat:reset
+```
+
 ## Branch-based review
 
 A pull request tracks a source branch and a base branch. Each approve or reject
@@ -187,18 +246,9 @@ gitpr debug export <legacy-pr-id> --ref head --to /tmp/gitpr-head
 gitpr debug export <legacy-pr-id> --ref base --to /tmp/gitpr-base
 ```
 
-## Installation and development
+## Development
 
 ```bash
 task build
 task check
-go install github.com/wyrd-company/gitpr/cmd/gitpr@latest
-```
-
-Release builds are published to GitHub Releases. The repository uses `tagver`
-for tag-driven version calculation; release tags use `vX.Y.Z`.
-
-```bash
-task version
-task version:json
 ```
