@@ -8,7 +8,7 @@ import (
 
 func TestListLoadedKeepsBothRecordShapesWithoutSkippedMessage(t *testing.T) {
 	m := &Model{}
-	updated, _ := m.Update(listLoadedMsg{records: []model.Record{model.PR{ID: "legacy"}, model.PR2{Schema: 2, ID: "branch"}}})
+	updated, _ := m.Update(listLoadedMsg{records: []model.Record{model.PR{ID: "legacy", Status: model.StatusOpen}, model.PR2{Schema: 2, ID: "branch", State: model.PRStateOpen}}})
 	got := updated.(*Model)
 	if len(got.openRecords) != 2 || got.infoMessage != "" {
 		t.Fatalf("TUI records = %d, message %q", len(got.openRecords), got.infoMessage)

@@ -81,6 +81,8 @@ type Model struct {
 	height int
 
 	openRecords         []model.Record
+	allRecords          []model.Record
+	showAll             bool
 	listCursor          int
 	currentPR           model.PR
 	currentPR2          *model.PR2
@@ -197,7 +199,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errMessage = msg.err.Error()
 			return m, nil
 		}
-		m.openRecords = msg.records
+		m.allRecords = msg.records
+		m.applyListMode()
 		if m.listCursor >= len(m.openRecords) && len(m.openRecords) > 0 {
 			m.listCursor = len(m.openRecords) - 1
 		}
@@ -292,6 +295,9 @@ func (m *Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		record := m.openRecords[m.listCursor]
 		return m, m.loadPRCmd(record.RecordID())
+	case "a":
+		m.showAll = !m.showAll
+		m.applyListMode()
 	}
 	return m, nil
 }
@@ -485,11 +491,8 @@ func (m *Model) renderList() string {
 
 	var lines []string
 	title := "Open PRs"
-	for _, record := range m.openRecords {
-		if pr, ok := record.(model.PR2); ok && pr.State != model.PRStateOpen {
-			title = "PRs"
-			break
-		}
+	if m.showAll {
+		title = "All PRs"
 	}
 	lines = append(lines, titleStyle.Render(title))
 	lines = append(lines, "")
@@ -521,7 +524,15 @@ func (m *Model) renderList() string {
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, mutedStyle.Render("Keys: j/k move  enter open  q quit"))
+	help := "Keys: j/k move  enter open  q quit"
+	if len(m.allRecords) != len(m.openRecords) || m.showAll {
+		if m.showAll {
+			help += "  a open"
+		} else {
+			help += "  a all"
+		}
+	}
+	lines = append(lines, mutedStyle.Render(help))
 	if m.errMessage != "" {
 		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render(m.errMessage))
 	}
@@ -653,27 +664,29 @@ func (m *Model) renderBranchDetail() string {
 
 func (m *Model) loadOpenPRsCmd() tea.Cmd {
 	return func() tea.Msg {
-		records, err := m.svc.OpenPRs()
+		records, err := m.svc.ListPRs("all")
 		if err != nil {
 			return listLoadedMsg{err: err}
-		}
-		all, err := m.svc.ListPRs("all")
-		if err != nil {
-			return listLoadedMsg{err: err}
-		}
-		seen := make(map[string]struct{}, len(records))
-		for _, record := range records {
-			seen[record.RecordID()] = struct{}{}
-		}
-		for _, record := range all {
-			if _, exists := seen[record.RecordID()]; exists {
-				continue
-			}
-			if _, branchBased := record.(model.PR2); branchBased {
-				records = append(records, record)
-			}
 		}
 		return listLoadedMsg{records: records}
+	}
+}
+
+func (m *Model) applyListMode() {
+	if m.showAll {
+		m.openRecords = append([]model.Record(nil), m.allRecords...)
+	} else {
+		m.openRecords = m.openRecords[:0]
+		for _, record := range m.allRecords {
+			if record.RecordDisplayState() == "open" {
+				m.openRecords = append(m.openRecords, record)
+			}
+		}
+	}
+	if len(m.openRecords) == 0 {
+		m.listCursor = 0
+	} else if m.listCursor >= len(m.openRecords) {
+		m.listCursor = len(m.openRecords) - 1
 	}
 }
 

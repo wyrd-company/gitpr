@@ -18,9 +18,9 @@ import (
 func TestMainListRendersLegacyUnchangedAndBranchRecordWithStateReason(t *testing.T) {
 	legacy := model.PR{ID: "01LEGACYTUILIST00000000000", SourceBranch: "legacy-topic", Title: "Legacy title", Status: model.StatusOpen}
 	branch := model.PR2{Schema: 2, ID: "01BRANCHTUILIST00000000000", SourceBranch: "branch-topic", Title: "Branch title", State: model.PRStateClosed, Closure: &model.Closure{Reason: model.ClosureAbandoned}}
-	m := &Model{width: 100, height: 30, openRecords: []model.Record{legacy, branch}}
+	m := &Model{width: 100, height: 30, openRecords: []model.Record{legacy, branch}, allRecords: []model.Record{legacy, branch}, showAll: true}
 	view := ansi.Strip(m.renderList())
-	if !strings.HasPrefix(view, "PRs\n") {
+	if !strings.HasPrefix(view, "All PRs\n") {
 		t.Fatalf("mixed retained list title:\n%s", view)
 	}
 	legacyLine := "> 01LEGACYTUIL  legacy-topic       Legacy title"
@@ -34,16 +34,44 @@ func TestMainListRendersLegacyUnchangedAndBranchRecordWithStateReason(t *testing
 	}
 }
 
+func TestTUIListDefaultsOpenAndToggleShowsRetainedRecords(t *testing.T) {
+	records := []model.Record{
+		model.PR{ID: "legacy-open", Status: model.StatusOpen},
+		model.PR2{Schema: 2, ID: "branch-open", State: model.PRStateOpen},
+		model.PR2{Schema: 2, ID: "branch-merged", Title: "Merged title", State: model.PRStateMerged},
+		model.PR2{Schema: 2, ID: "branch-closed", Title: "Closed title", State: model.PRStateClosed, Closure: &model.Closure{Reason: model.ClosureAbandoned}},
+	}
+	m := &Model{width: 100, height: 30}
+	updated, _ := m.Update(listLoadedMsg{records: records})
+	got := updated.(*Model)
+	if got.showAll || len(got.openRecords) != 2 {
+		t.Fatalf("default records=%#v showAll=%v", got.openRecords, got.showAll)
+	}
+	defaultView := ansi.Strip(got.renderList())
+	if !strings.HasPrefix(defaultView, "Open PRs\n") || strings.Contains(defaultView, "Merged title") || !strings.Contains(defaultView, "a all") {
+		t.Fatalf("default view:\n%s", defaultView)
+	}
+	updated, _ = got.handleListKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	got = updated.(*Model)
+	if !got.showAll || len(got.openRecords) != 4 {
+		t.Fatalf("all records=%#v showAll=%v", got.openRecords, got.showAll)
+	}
+	allView := ansi.Strip(got.renderList())
+	if !strings.HasPrefix(allView, "All PRs\n") || !strings.Contains(allView, "merged") || !strings.Contains(allView, "closed (abandoned)") || !strings.Contains(allView, "a open") {
+		t.Fatalf("all view:\n%s", allView)
+	}
+}
+
 func TestLegacyOnlyMainListOutputRemainsByteIdentical(t *testing.T) {
 	legacy := model.PR{ID: "01LEGACYTUILIST00000000000", SourceBranch: "legacy-topic", Title: "Legacy title", Status: model.StatusOpen}
-	got := ansi.Strip((&Model{width: 100, height: 30, openRecords: []model.Record{legacy}}).renderList())
+	got := ansi.Strip((&Model{width: 100, height: 30, openRecords: []model.Record{legacy}, allRecords: []model.Record{legacy}}).renderList())
 	want := "Open PRs\n\n> 01LEGACYTUIL  legacy-topic       Legacy title\n\nKeys: j/k move  enter open  q quit"
 	if got != want {
 		t.Fatalf("legacy list:\n%q\nwant:\n%q", got, want)
 	}
 }
 
-func TestTUILoaderIncludesRetainedClosedBranchRecords(t *testing.T) {
+func TestTUILoaderReturnsCompleteLedgerForLocalPartitioning(t *testing.T) {
 	dir := t.TempDir()
 	tuiGit(t, dir, "init", "-b", "main")
 	tuiGit(t, dir, "config", "user.name", "test user")
