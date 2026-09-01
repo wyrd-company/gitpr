@@ -204,6 +204,11 @@ func TestMergeResultRenderingRejectsUnknownRecordWithoutPanic(t *testing.T) {
 }
 
 func TestCloseReasonListingAndDeleteCommandsUseStdout(t *testing.T) {
+	policyCmd := newRootCmd()
+	if !policyCmd.SilenceUsage || !policyCmd.SilenceErrors {
+		t.Fatalf("root error policy: SilenceUsage=%t SilenceErrors=%t", policyCmd.SilenceUsage, policyCmd.SilenceErrors)
+	}
+
 	dir := newCLITestRepo(t)
 	withinDir(t, dir, func() {
 		id := strings.Fields(executeCLI(t, "create", "--title", "Lifecycle"))[2]
