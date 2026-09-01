@@ -166,8 +166,11 @@ func (s *Store) LoadPR(id string) (model.PR, string, error) {
 	}
 
 	metaRef := s.metaRef(resolvedID)
-	metaVersion, err := s.resolveRef(metaRef)
+	metaVersion, exists, err := s.resolveRefForLoad(metaRef)
 	if err != nil {
+		return model.PR{}, "", err
+	}
+	if !exists {
 		return model.PR{}, "", fmt.Errorf("PR %q not found", id)
 	}
 	data, err := s.showFileFromRef(metaVersion, prFileName)
@@ -185,13 +188,6 @@ func (s *Store) LoadPR(id string) (model.PR, string, error) {
 
 	return pr, metaVersion, nil
 }
-
-// SetBeforeSaveHook installs a synchronization point used by deterministic
-// concurrency tests. Production callers leave it unset.
-func (s *Store) SetBeforeSaveHook(hook func()) {
-	s.beforeSaveHook = hook
-}
-
 func (s *Store) ListPRs(filter string) ([]model.PR, error) {
 	filter = strings.ToLower(strings.TrimSpace(filter))
 	if filter == "" {
@@ -391,6 +387,22 @@ func (s *Store) resolveRef(ref string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+func (s *Store) resolveRefForLoad(ref string) (string, bool, error) {
+	_, err := runGit(context.Background(), s.repo.CommonRoot, "show-ref", "--verify", "--quiet", ref)
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	out, err := runGit(context.Background(), s.repo.CommonRoot, "rev-parse", "--verify", ref)
+	if err != nil {
+		return "", false, err
+	}
+	return strings.TrimSpace(out), true, nil
+}
+
 func (s *Store) showFileFromRef(ref, fileName string) ([]byte, error) {
 	out, err := runGit(context.Background(), s.repo.CommonRoot, "show", ref+":"+fileName)
 	if err != nil {
@@ -471,7 +483,7 @@ func hashObject(dir string, data []byte) (string, error) {
 }
 
 func runGit(ctx context.Context, dir string, args ...string) (string, error) {
-	return runGitWithEnv(ctx, dir, os.Environ(), "", args...)
+	return runGitWithEnv(ctx, dir, stableGitEnv(), "", args...)
 }
 
 func runGitWithEnv(ctx context.Context, dir string, env []string, stdin string, args ...string) (string, error) {
@@ -492,7 +504,17 @@ func runGitWithEnv(ctx context.Context, dir string, env []string, stdin string, 
 }
 
 func runGitWithStdin(ctx context.Context, dir, stdin string, args ...string) (string, error) {
-	return runGitWithEnv(ctx, dir, os.Environ(), stdin, args...)
+	return runGitWithEnv(ctx, dir, stableGitEnv(), stdin, args...)
+}
+
+func stableGitEnv() []string {
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, value := range os.Environ() {
+		if !strings.HasPrefix(value, "LC_ALL=") {
+			env = append(env, value)
+		}
+	}
+	return append(env, "LC_ALL=C")
 }
 
 func splitLines(raw string) []string {
@@ -549,8 +571,7 @@ func oidOrZero(oid string) string {
 func isRefConflict(err error) bool {
 	message := err.Error()
 	return strings.Contains(message, "cannot lock ref") ||
-		strings.Contains(message, "reference already exists") ||
-		strings.Contains(message, "is at")
+		strings.Contains(message, "reference already exists")
 }
 
 func commitEnv(dir string) ([]string, error) {

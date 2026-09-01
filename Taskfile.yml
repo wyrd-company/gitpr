@@ -35,14 +35,14 @@ tasks:
   test:
     desc: Run the Go test suite
     cmds:
-      - go test ./...
+      - go test -tags=test ./...
 
   check:
     desc: Run formatting, static analysis, and tests
     cmds:
       - test -z "$(gofmt -l .)"
       - go vet ./...
-      - go test ./...
+      - go test -tags=test ./...
 
   release:
     desc: Show release tasks
