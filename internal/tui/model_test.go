@@ -1,10 +1,20 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wyrd-company/gitpr/internal/model"
 )
+
+func TestListLoadedReportsSkippedBranchBasedRecords(t *testing.T) {
+	m := &Model{}
+	updated, _ := m.Update(listLoadedMsg{prs: []model.PR{{ID: "legacy"}}, skipped: 2})
+	got := updated.(*Model)
+	if len(got.openPRs) != 1 || !strings.Contains(got.infoMessage, "2 branch-based") || !strings.Contains(got.infoMessage, "increment 8") {
+		t.Fatalf("TUI skipped-record state = prs %d, message %q", len(got.openPRs), got.infoMessage)
+	}
+}
 
 func TestPRLoadedResetsCommentCycle(t *testing.T) {
 	m := &Model{
