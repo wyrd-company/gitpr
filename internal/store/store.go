@@ -28,8 +28,11 @@ const (
 )
 
 type Store struct {
-	repo *gitutil.Repo
+	repo           *gitutil.Repo
+	beforeSaveHook func()
 }
+
+var ErrMetadataConflict = errors.New("gitpr metadata changed concurrently")
 
 func New(root string) (*Store, error) {
 	repo, err := gitutil.Open(root)
@@ -78,13 +81,12 @@ func (s *Store) SaveConfig(cfg model.Config) error {
 	})
 }
 
-func (s *Store) SavePR(pr model.PR, previousStatus model.Status) (string, error) {
+func (s *Store) SavePR(pr model.PR, previousStatus model.Status, expectedMeta string) (string, error) {
 	if strings.TrimSpace(pr.ID) == "" {
 		return "", errors.New("PR ID is required")
 	}
 
 	metaRef := s.metaRef(pr.ID)
-	oldMeta, _ := s.resolveRef(metaRef)
 	oldHead, _ := s.resolveRef(s.headRef(pr.ID))
 	oldBase, _ := s.resolveRef(s.baseRef(pr.ID))
 	currentStatusRef := s.indexRef(pr.Status, pr.ID)
@@ -96,11 +98,15 @@ func (s *Store) SavePR(pr model.PR, previousStatus model.Status) (string, error)
 	}
 
 	message := "gitpr: update " + pr.ID
-	if oldMeta == "" {
+	if expectedMeta == "" {
 		message = "gitpr: create " + pr.ID
 	}
 
-	metaCommit, err := s.writeCommit(prFileName, data, oldMeta, message)
+	if s.beforeSaveHook != nil {
+		s.beforeSaveHook()
+	}
+
+	metaCommit, err := s.writeCommit(prFileName, data, expectedMeta, message)
 	if err != nil {
 		return "", err
 	}
@@ -110,7 +116,7 @@ func (s *Store) SavePR(pr model.PR, previousStatus model.Status) (string, error)
 			Action: "update",
 			Ref:    metaRef,
 			NewOID: metaCommit,
-			OldOID: oidOrZero(oldMeta),
+			OldOID: oidOrZero(expectedMeta),
 		},
 		{
 			Action: "update",
@@ -145,6 +151,9 @@ func (s *Store) SavePR(pr model.PR, previousStatus model.Status) (string, error)
 	}
 
 	if err := s.batchUpdateRefs(updates); err != nil {
+		if isRefConflict(err) {
+			return "", fmt.Errorf("%w for PR %s", ErrMetadataConflict, pr.ID)
+		}
 		return "", err
 	}
 
@@ -158,7 +167,11 @@ func (s *Store) LoadPR(id string) (model.PR, string, error) {
 	}
 
 	metaRef := s.metaRef(resolvedID)
-	data, err := s.showFileFromRef(metaRef, prFileName)
+	metaVersion, err := s.resolveRef(metaRef)
+	if err != nil {
+		return model.PR{}, "", fmt.Errorf("PR %q not found", id)
+	}
+	data, err := s.showFileFromRef(metaVersion, prFileName)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return model.PR{}, "", fmt.Errorf("PR %q not found", id)
@@ -171,7 +184,13 @@ func (s *Store) LoadPR(id string) (model.PR, string, error) {
 		return model.PR{}, "", err
 	}
 
-	return pr, metaRef, nil
+	return pr, metaVersion, nil
+}
+
+// SetBeforeSaveHook installs a synchronization point used by deterministic
+// concurrency tests. Production callers leave it unset.
+func (s *Store) SetBeforeSaveHook(hook func()) {
+	s.beforeSaveHook = hook
 }
 
 func (s *Store) ListPRs(filter string) ([]model.PR, error) {
@@ -526,6 +545,13 @@ func oidOrZero(oid string) string {
 		return zeroOID
 	}
 	return oid
+}
+
+func isRefConflict(err error) bool {
+	message := err.Error()
+	return strings.Contains(message, "cannot lock ref") ||
+		strings.Contains(message, "reference already exists") ||
+		strings.Contains(message, "is at")
 }
 
 func commitEnv(dir string) ([]string, error) {

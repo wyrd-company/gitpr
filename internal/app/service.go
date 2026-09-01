@@ -19,6 +19,8 @@ type Service struct {
 	store *store.Store
 }
 
+const metadataMutationAttempts = 5
+
 type CreatePRRequest struct {
 	Title       string
 	Description string
@@ -99,7 +101,7 @@ func (s *Service) CreatePR(ctx context.Context, req CreatePRRequest) (model.PR, 
 		UpdatedAt:          now,
 	}
 
-	ref, err := s.store.SavePR(pr, "")
+	ref, err := s.store.SavePR(pr, "", "")
 	if err != nil {
 		return model.PR{}, "", err
 	}
@@ -124,112 +126,88 @@ func (s *Service) RefreshConflicts(ctx context.Context, pr model.PR) (model.PR, 
 	if pr.Status != model.StatusOpen {
 		return pr, nil
 	}
+	return s.mutatePR(pr.ID, func(current *model.PR) error {
+		if current.Status != model.StatusOpen {
+			return fmt.Errorf("PR %s is already closed", current.ID)
+		}
 
-	repo, err := gitutil.Open(pr.RepositoryRoot)
-	if err != nil {
-		return pr, err
-	}
-
-	conflicts, err := repo.DetectMergeConflicts(ctx, pr.BaseBranch, pr.SourceHeadSHA)
-	if err != nil {
-		return pr, err
-	}
-
-	pr.MergeConflicts = conflicts
-	pr.UpdatedAt = time.Now().UTC()
-	_, err = s.store.SavePR(pr, pr.Status)
-	return pr, err
+		repo, err := gitutil.Open(current.RepositoryRoot)
+		if err != nil {
+			return err
+		}
+		conflicts, err := repo.DetectMergeConflicts(ctx, current.BaseBranch, current.SourceHeadSHA)
+		if err != nil {
+			return err
+		}
+		current.MergeConflicts = conflicts
+		current.UpdatedAt = time.Now().UTC()
+		return nil
+	})
 }
 
 func (s *Service) AddComment(id string, comment model.Comment) (model.PR, error) {
-	pr, comment, err := s.loadOpenPRForComment(id, comment)
-	if err != nil {
-		return model.PR{}, err
+	comment.Comment = strings.TrimSpace(comment.Comment)
+	if comment.Comment == "" {
+		return model.PR{}, errors.New("comment text is required")
 	}
-
 	comment.CreatedAt = time.Now().UTC()
-	pr.Comments = append(pr.Comments, comment)
-
-	pr.UpdatedAt = time.Now().UTC()
-	if _, err := s.store.SavePR(pr, pr.Status); err != nil {
-		return model.PR{}, err
-	}
-
-	return pr, nil
+	return s.mutatePR(id, func(pr *model.PR) error {
+		if pr.Status != model.StatusOpen {
+			return errors.New("cannot comment on a closed PR")
+		}
+		pr.Comments = append(pr.Comments, comment)
+		pr.UpdatedAt = time.Now().UTC()
+		return nil
+	})
 }
 
 func (s *Service) UpdateComment(id string, commentIndex int, comment model.Comment) (model.PR, error) {
-	pr, comment, err := s.loadOpenPRForComment(id, comment)
-	if err != nil {
-		return model.PR{}, err
-	}
-
-	if commentIndex < 0 || commentIndex >= len(pr.Comments) {
-		return model.PR{}, fmt.Errorf("comment index %d is out of range", commentIndex)
-	}
-
-	existing := pr.Comments[commentIndex]
-	if existing.FilePath != comment.FilePath || existing.LineStart != comment.LineStart || existing.LineEnd != comment.LineEnd {
-		return model.PR{}, fmt.Errorf(
-			"comment anchor mismatch: index %d is anchored at %s:%d-%d, not %s:%d-%d",
-			commentIndex,
-			existing.FilePath, existing.LineStart, existing.LineEnd,
-			comment.FilePath, comment.LineStart, comment.LineEnd,
-		)
-	}
-
-	comment.CreatedAt = existing.CreatedAt
-	if comment.CommitSHA == "" {
-		comment.CommitSHA = existing.CommitSHA
-	}
-	pr.Comments[commentIndex] = comment
-
-	pr.UpdatedAt = time.Now().UTC()
-	if _, err := s.store.SavePR(pr, pr.Status); err != nil {
-		return model.PR{}, err
-	}
-
-	return pr, nil
-}
-
-func (s *Service) loadOpenPRForComment(id string, comment model.Comment) (model.PR, model.Comment, error) {
-	pr, _, err := s.store.LoadPR(id)
-	if err != nil {
-		return model.PR{}, model.Comment{}, err
-	}
-
-	if pr.Status != model.StatusOpen {
-		return model.PR{}, model.Comment{}, errors.New("cannot comment on a closed PR")
-	}
-
 	comment.Comment = strings.TrimSpace(comment.Comment)
 	if comment.Comment == "" {
-		return model.PR{}, model.Comment{}, errors.New("comment text is required")
+		return model.PR{}, errors.New("comment text is required")
 	}
+	return s.mutatePR(id, func(pr *model.PR) error {
+		if pr.Status != model.StatusOpen {
+			return errors.New("cannot comment on a closed PR")
+		}
+		if commentIndex < 0 || commentIndex >= len(pr.Comments) {
+			return fmt.Errorf("comment index %d is out of range", commentIndex)
+		}
 
-	return pr, comment, nil
+		existing := pr.Comments[commentIndex]
+		if existing.FilePath != comment.FilePath || existing.LineStart != comment.LineStart || existing.LineEnd != comment.LineEnd {
+			return fmt.Errorf(
+				"comment anchor mismatch: index %d is anchored at %s:%d-%d, not %s:%d-%d",
+				commentIndex,
+				existing.FilePath, existing.LineStart, existing.LineEnd,
+				comment.FilePath, comment.LineStart, comment.LineEnd,
+			)
+		}
+
+		comment.CreatedAt = existing.CreatedAt
+		if comment.CommitSHA == "" {
+			comment.CommitSHA = existing.CommitSHA
+		}
+		pr.Comments[commentIndex] = comment
+		pr.UpdatedAt = time.Now().UTC()
+		return nil
+	})
 }
 
 func (s *Service) RejectPR(id string) (model.PR, string, error) {
-	pr, _, err := s.store.LoadPR(id)
+	pr, ref, err := s.mutatePRRef(id, func(pr *model.PR) error {
+		if pr.Status != model.StatusOpen {
+			return fmt.Errorf("PR %s is already closed", pr.ID)
+		}
+		now := time.Now().UTC()
+		pr.Status = model.StatusRejected
+		pr.UpdatedAt = now
+		pr.ClosedAt = &now
+		return nil
+	})
 	if err != nil {
 		return model.PR{}, "", err
 	}
-
-	if pr.Status != model.StatusOpen {
-		return model.PR{}, "", fmt.Errorf("PR %s is already closed", pr.ID)
-	}
-
-	previousStatus := pr.Status
-	now := time.Now().UTC()
-	pr.Status = model.StatusRejected
-	pr.UpdatedAt = now
-	pr.ClosedAt = &now
-	ref, err := s.store.SavePR(pr, previousStatus)
-	if err != nil {
-		return model.PR{}, "", err
-	}
-
 	return pr, ref, nil
 }
 
@@ -281,8 +259,14 @@ func (s *Service) MergePR(ctx context.Context, id string, cleanup bool) (model.P
 	pr.MergeConflicts = conflicts
 
 	if len(conflicts) > 0 {
-		pr.UpdatedAt = time.Now().UTC()
-		if _, err := s.store.SavePR(pr, pr.Status); err != nil {
+		if _, err := s.mutatePR(pr.ID, func(current *model.PR) error {
+			if current.Status != model.StatusOpen {
+				return fmt.Errorf("PR %s is already closed", current.ID)
+			}
+			current.MergeConflicts = conflicts
+			current.UpdatedAt = time.Now().UTC()
+			return nil
+		}); err != nil {
 			return model.PR{}, "", err
 		}
 		return model.PR{}, "", errors.New("merge conflicts detected; PR cannot be merged")
@@ -297,21 +281,48 @@ func (s *Service) MergePR(ctx context.Context, id string, cleanup bool) (model.P
 		cleanupErr = repo.CleanupSourceWorktree(ctx, pr.SourceWorktreePath, pr.SourceBranch)
 	}
 
-	previousStatus := pr.Status
-	now := time.Now().UTC()
-	pr.Status = model.StatusApproved
-	pr.UpdatedAt = now
-	pr.ClosedAt = &now
-	ref, err := s.store.SavePR(pr, previousStatus)
+	pr, ref, err := s.mutatePRRef(pr.ID, func(current *model.PR) error {
+		if current.Status != model.StatusOpen {
+			return fmt.Errorf("PR %s is already closed", current.ID)
+		}
+		now := time.Now().UTC()
+		current.Status = model.StatusApproved
+		current.UpdatedAt = now
+		current.ClosedAt = &now
+		return nil
+	})
 	if err != nil {
 		return model.PR{}, "", err
 	}
-
 	if cleanupErr != nil {
 		return pr, ref, fmt.Errorf("merged successfully, but cleanup failed: %w", cleanupErr)
 	}
 
 	return pr, ref, nil
+}
+
+func (s *Service) mutatePR(id string, mutate func(*model.PR) error) (model.PR, error) {
+	pr, _, err := s.mutatePRRef(id, mutate)
+	return pr, err
+}
+
+func (s *Service) mutatePRRef(id string, mutate func(*model.PR) error) (model.PR, string, error) {
+	for attempt := 0; attempt < metadataMutationAttempts; attempt++ {
+		pr, version, err := s.store.LoadPR(id)
+		if err != nil {
+			return model.PR{}, "", err
+		}
+		previousStatus := pr.Status
+		if err := mutate(&pr); err != nil {
+			return model.PR{}, "", err
+		}
+		if ref, err := s.store.SavePR(pr, previousStatus, version); err == nil {
+			return pr, ref, nil
+		} else if !errors.Is(err, store.ErrMetadataConflict) {
+			return model.PR{}, "", err
+		}
+	}
+	return model.PR{}, "", fmt.Errorf("%w after %d attempts; retry the command", store.ErrMetadataConflict, metadataMutationAttempts)
 }
 
 func (s *Service) OpenPRs() ([]model.PR, error) {
