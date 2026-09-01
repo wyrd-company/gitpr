@@ -177,3 +177,15 @@ func TestApprovePRRefusesLegacyRecordWithNewVerbDiagnostic(t *testing.T) {
 		t.Fatalf("legacy approve error = %v", err)
 	}
 }
+
+func TestRejectRecordPreservesLegacyRejectBehaviorWithoutReviewedHeads(t *testing.T) {
+	service, legacy := newTestPR(t)
+	record, _, err := service.RejectRecord(context.Background(), legacy.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := record.(model.PR)
+	if !ok || got.Status != model.StatusRejected {
+		t.Fatalf("legacy rejected record = %#v", record)
+	}
+}
