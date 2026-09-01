@@ -2,8 +2,8 @@ $schema: https://refinery.systems/ontology/decision-record
 name: Adopt branch-based pull requests with immutable review events
 
 relationships:
-  - contextualizes:
-      - branch-based-pull-requests
+  contextualizes:
+    - branch-based-pull-requests
 
 description: >-
   gitpr models a PR as a single immutable snapshot frozen at review time. The
@@ -61,8 +61,8 @@ expected-outcomes:
       late responses after closure.
   negative:
     - Strict double-equality gating invalidates approvals on every base move,
-      raising re-review frequency; the compensation is interdiff-scoped
-      re-review, not a looser gate.
+      raising re-review frequency; the compensation is the interdiff-scoped
+      re-review the review surface computes and offers, not a looser gate.
     - Two record shapes coexist for the life of the tool, since legacy
       snapshots stay readable without migration or reinterpretation.
     - Anchor re-mapping across rebases adds the design's largest
