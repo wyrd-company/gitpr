@@ -14,6 +14,7 @@ type ReviewBasis struct {
 	SourceHeadSHA       string `yaml:"source_head_sha,omitempty"`
 	BaseHeadSHA         string `yaml:"base_head_sha"`
 	SourceBranchMissing bool   `yaml:"source_branch_missing"`
+	BaseBranchMissing   bool   `yaml:"base_branch_missing"`
 	MergeBaseSHA        string `yaml:"merge_base_sha,omitempty"`
 	BaseContained       *bool  `yaml:"base_contained,omitempty"`
 }
@@ -51,6 +52,14 @@ func (s *Service) ReviewPR(ctx context.Context, id string) (ReviewReport, error)
 		report.LatestEvent = &latest
 	}
 	baseRef := "refs/heads/" + pr.BaseBranch
+	baseExists, err := repo.BranchExists(ctx, pr.BaseBranch)
+	if err != nil {
+		return ReviewReport{}, err
+	}
+	if !baseExists {
+		report.Basis.BaseBranchMissing = true
+		return report, nil
+	}
 	report.Basis.BaseHeadSHA, err = repo.HeadSHA(ctx, baseRef)
 	if err != nil {
 		return ReviewReport{}, fmt.Errorf("resolve base branch %q: %w", pr.BaseBranch, err)

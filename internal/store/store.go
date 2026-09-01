@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -19,12 +20,13 @@ import (
 )
 
 const (
-	configRefPrefix = "refs/gitpr/config"
-	prRefPrefix     = "refs/gitpr/pr"
-	indexRefPrefix  = "refs/gitpr/index"
-	prFileName      = "pr.yaml"
-	configFileName  = "config.yaml"
-	zeroOID         = "0000000000000000000000000000000000000000"
+	configRefPrefix   = "refs/gitpr/config"
+	prRefPrefix       = "refs/gitpr/pr"
+	indexRefPrefix    = "refs/gitpr/index"
+	openPairRefPrefix = "refs/gitpr/openpair"
+	prFileName        = "pr.yaml"
+	configFileName    = "config.yaml"
+	zeroOID           = "0000000000000000000000000000000000000000"
 )
 
 type Store struct {
@@ -38,6 +40,7 @@ var ErrLegacyWriteSchema = errors.New("legacy write requires a legacy record")
 var ErrSchema2WriteSchema = errors.New("schema-2 write requires a schema-2 record")
 var ErrUnsupportedSchema = errors.New("unsupported PR schema")
 var ErrDuplicateEventID = errors.New("duplicate review event ID")
+var ErrOpenPairConflict = errors.New("an open branch-based PR already tracks this branch pair")
 
 func New(root string) (*Store, error) {
 	repo, err := gitutil.Open(root)
@@ -200,6 +203,17 @@ func (s *Store) SavePR2(pr model.PR2, previousState model.PRState, expectedMeta 
 	updates := []refUpdate{{Action: "update", Ref: metaRef, NewOID: metaCommit, OldOID: oidOrZero(expectedMeta)}, {
 		Action: "update", Ref: currentIndexRef, NewOID: metaCommit, OldOID: oidOrZero(oldCurrentIndex),
 	}}
+	// Legacy PRs deliberately do not participate: their frozen snapshots do not
+	// own a live source/base branch pair.
+	openPairRef := s.openPairRef(pr.SourceBranch, pr.BaseBranch)
+	if expectedMeta == "" && pr.State == model.PRStateOpen {
+		updates = append(updates, refUpdate{Action: "update", Ref: openPairRef, NewOID: metaCommit, OldOID: zeroOID})
+	}
+	if previousState == model.PRStateOpen && pr.State != model.PRStateOpen {
+		if oid, err := s.resolveRef(openPairRef); err == nil {
+			updates = append(updates, refUpdate{Action: "delete", Ref: openPairRef, OldOID: oid})
+		}
+	}
 	if previousState != "" && previousState != pr.State {
 		oldRef := s.indexRef2(previousState, pr.ID)
 		if oid, err := s.resolveRef(oldRef); err == nil {
@@ -234,11 +248,43 @@ func (s *Store) SavePR2(pr model.PR2, previousState model.PRState, expectedMeta 
 
 	if err := s.batchUpdateRefs(updates); err != nil {
 		if isRefConflict(err) {
+			if expectedMeta == "" && pr.State == model.PRStateOpen {
+				return "", fmt.Errorf("%w: %s into %s", ErrOpenPairConflict, pr.SourceBranch, pr.BaseBranch)
+			}
 			return "", fmt.Errorf("%w for PR %s", ErrMetadataConflict, pr.ID)
 		}
 		return "", err
 	}
 	return metaRef, nil
+}
+
+func (s *Store) DeletePR2(pr model.PR2, expectedMeta string) error {
+	updates := []refUpdate{{Action: "delete", Ref: s.metaRef(pr.ID), OldOID: expectedMeta}}
+	if oid, err := s.resolveRef(s.indexRef2(pr.State, pr.ID)); err == nil {
+		updates = append(updates, refUpdate{Action: "delete", Ref: s.indexRef2(pr.State, pr.ID), OldOID: oid})
+	}
+	if pr.State == model.PRStateOpen {
+		ref := s.openPairRef(pr.SourceBranch, pr.BaseBranch)
+		if oid, err := s.resolveRef(ref); err == nil {
+			updates = append(updates, refUpdate{Action: "delete", Ref: ref, OldOID: oid})
+		}
+	}
+	refs, err := s.listRefs(prRefPrefix + "/" + pr.ID)
+	if err != nil {
+		return err
+	}
+	for _, ref := range refs {
+		if ref.Name != s.metaRef(pr.ID) {
+			updates = append(updates, refUpdate{Action: "delete", Ref: ref.Name, OldOID: ref.Oid})
+		}
+	}
+	if err := s.batchUpdateRefs(updates); err != nil {
+		if isRefConflict(err) {
+			return fmt.Errorf("%w for PR %s", ErrMetadataConflict, pr.ID)
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Store) validateEventHistory(pr model.PR2, expectedMeta string) error {
@@ -694,6 +740,11 @@ func (s *Store) indexRef(status model.Status, id string) string {
 
 func (s *Store) indexRef2(state model.PRState, id string) string {
 	return indexRefPrefix + "/" + string(state) + "/" + id
+}
+
+func (s *Store) openPairRef(sourceBranch, baseBranch string) string {
+	digest := sha256.Sum256([]byte(sourceBranch + "\x00" + baseBranch))
+	return fmt.Sprintf("%s/%x", openPairRefPrefix, digest)
 }
 
 func prIDFromMetaRef(ref string) string {

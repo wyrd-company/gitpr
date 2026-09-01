@@ -77,13 +77,18 @@ func (s *Service) CreatePR(ctx context.Context, req CreatePRRequest) (model.PR2,
 		UpdatedAt:          now,
 	}
 
-	ref, err := s.store.SavePR2(pr, "", "")
-	if err != nil {
-		return model.PR2{}, "", err
+	if cfg.DefaultBranch != baseBranch {
+		cfg.DefaultBranch = baseBranch
+		if err := s.store.SaveConfig(cfg); err != nil {
+			return model.PR2{}, "", err
+		}
 	}
 
-	cfg.DefaultBranch = baseBranch
-	if err := s.store.SaveConfig(cfg); err != nil {
+	ref, err := s.store.SavePR2(pr, "", "")
+	if err != nil {
+		if errors.Is(err, store.ErrOpenPairConflict) {
+			return model.PR2{}, "", fmt.Errorf("open branch-based PR already tracks %s into %s: %w", branch, baseBranch, err)
+		}
 		return model.PR2{}, "", err
 	}
 
@@ -97,6 +102,13 @@ func (s *Service) ListPRs(status string) ([]model.Record, error) {
 func (s *Service) LoadRecord(id string) (model.Record, string, error) { return s.store.LoadPR(id) }
 
 func (s *Service) LoadPR(id string) (model.PR, string, error) {
+	return s.store.LoadLegacyPR(id)
+}
+
+func (s *Service) LoadCommentsPR(id string) (model.PR, string, error) {
+	if err := s.requireLegacySurface(id, "comments on branch-based PRs are not available yet; increment 7 adds this surface"); err != nil {
+		return model.PR{}, "", err
+	}
 	return s.store.LoadLegacyPR(id)
 }
 
@@ -123,8 +135,19 @@ func (s *Service) RefreshConflicts(ctx context.Context, pr model.PR) (model.PR, 
 	})
 }
 
+func (s *Service) RefreshPR(ctx context.Context, id string) (model.PR, error) {
+	if err := s.requireLegacySurface(id, "refresh is legacy-only; branch-based review reports base containment without persisting, so refresh is not available"); err != nil {
+		return model.PR{}, err
+	}
+	pr, _, err := s.store.LoadLegacyPR(id)
+	if err != nil {
+		return model.PR{}, err
+	}
+	return s.RefreshConflicts(ctx, pr)
+}
+
 func (s *Service) AddComment(id string, comment model.Comment) (model.PR, error) {
-	if err := s.requireLegacySurface(id, "comments"); err != nil {
+	if err := s.requireLegacySurface(id, "comments on branch-based PRs are not available yet; increment 7 adds this surface"); err != nil {
 		return model.PR{}, err
 	}
 	comment.Comment = strings.TrimSpace(comment.Comment)
@@ -143,7 +166,7 @@ func (s *Service) AddComment(id string, comment model.Comment) (model.PR, error)
 }
 
 func (s *Service) UpdateComment(id string, commentIndex int, comment model.Comment) (model.PR, error) {
-	if err := s.requireLegacySurface(id, "comments"); err != nil {
+	if err := s.requireLegacySurface(id, "comments on branch-based PRs are not available yet; increment 7 adds this surface"); err != nil {
 		return model.PR{}, err
 	}
 	comment.Comment = strings.TrimSpace(comment.Comment)
@@ -180,18 +203,21 @@ func (s *Service) UpdateComment(id string, commentIndex int, comment model.Comme
 	})
 }
 
-func (s *Service) requireLegacySurface(id, surface string) error {
+func (s *Service) requireLegacySurface(id, unavailable string) error {
 	record, _, err := s.store.LoadPR(id)
 	if err != nil {
 		return err
 	}
 	if _, branchBased := record.(model.PR2); branchBased {
-		return fmt.Errorf("%s on branch-based PRs are not available yet; increment 7 adds this surface", surface)
+		return errors.New(unavailable)
 	}
 	return nil
 }
 
 func (s *Service) RejectPR(id string) (model.PR, string, error) {
+	if err := s.requireLegacySurface(id, "reject on branch-based PRs is not available yet; increment 4 adds branch-based verdicts"); err != nil {
+		return model.PR{}, "", err
+	}
 	pr, ref, err := s.mutatePRRef(id, func(pr *model.PR) error {
 		if pr.Status != model.StatusOpen {
 			return fmt.Errorf("PR %s is already closed", pr.ID)
@@ -209,6 +235,9 @@ func (s *Service) RejectPR(id string) (model.PR, string, error) {
 }
 
 func (s *Service) MergePR(ctx context.Context, id string, cleanup bool) (model.PR, string, error) {
+	if err := s.requireLegacySurface(id, "merge on branch-based PRs is not available yet; the merge increment adds this surface after verdicts"); err != nil {
+		return model.PR{}, "", err
+	}
 	pr, _, err := s.store.LoadLegacyPR(id)
 	if err != nil {
 		return model.PR{}, "", err
