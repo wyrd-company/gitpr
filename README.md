@@ -107,17 +107,30 @@ gitpr create --worktree /path/to/worktree --title "Fix merge handling"
 List PRs:
 
 ```bash
-gitpr list --status open
-gitpr list --status closed
-gitpr list --status merged
-gitpr list --status approved
-gitpr list --status rejected
-gitpr list --status all
+gitpr list                         # open records from both vocabularies
+gitpr list --state closed
+gitpr list --state merged
+gitpr list --state approved
+gitpr list --state rejected
+gitpr list --state closed --reason abandoned
+gitpr list --all
 ```
 
 Status filters are vocabulary-scoped: `open` includes both legacy snapshots and
 branch-based PRs; `approved` and `rejected` include legacy snapshots only;
 `merged` and `closed` include branch-based PRs only.
+
+Close an open branch-based PR without changing either branch:
+
+```bash
+gitpr close 01K0ABCDEFGH --reason abandoned --note "Not proceeding"
+gitpr close 01K0ABCDEFGH --reason superseded --superseded-by 01K0HIJKLMNO
+gitpr close 01K0ABCDEFGH --reason integrated --destination main \
+  --commit ffffffffffffffffffffffffffffffffffffffff
+```
+
+Closed and merged records remain available through `list --state`, `list
+--all`, and `show` until explicitly removed with `gitpr delete <id>`.
 
 Show a full PR:
 
