@@ -161,6 +161,24 @@ func TestEventHistoryUsesInstantEqualityAndRejectsDuplicateIDs(t *testing.T) {
 	}
 }
 
+func TestSavePR2RejectsNonCanonicalObjectIDsOnNewEvent(t *testing.T) {
+	st, base, head := newStoreTestHistory(t)
+	pr := completePR2(st.repo.CommonRoot, base, head)
+	if _, err := st.SavePR2(pr, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	loaded, version, _ := st.LoadPR2(pr.ID)
+	refsBefore := storeTestGit(t, st.repo.CommonRoot, "for-each-ref", "--format=%(refname) %(objectname)")
+	loaded.Events = append(loaded.Events, model.ReviewEvent{ID: "01INVALIDOBJECTEVENT0000000", SourceHeadSHA: "feature", BaseHeadSHA: base, MergeBaseSHA: base, Verdict: model.VerdictRejected, Timestamp: time.Now().UTC(), PredecessorEventID: loaded.Events[0].ID})
+	if _, err := st.SavePR2(loaded, loaded.State, version); !errors.Is(err, ErrInvalidEventObjectID) {
+		t.Fatalf("invalid event object ID error = %v, want ErrInvalidEventObjectID", err)
+	}
+	refsAfter := storeTestGit(t, st.repo.CommonRoot, "for-each-ref", "--format=%(refname) %(objectname)")
+	if refsAfter != refsBefore {
+		t.Fatalf("invalid event mutated refs\nbefore: %s\nafter: %s", refsBefore, refsAfter)
+	}
+}
+
 func TestLoadPRDispatchesAbsentSchemaToLegacyAndSchema2ToPR2(t *testing.T) {
 	st, legacy := newStoreTestPR(t)
 	legacy, _, err := st.LoadLegacyPR(legacy.ID)

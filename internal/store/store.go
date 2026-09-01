@@ -40,6 +40,7 @@ var ErrLegacyWriteSchema = errors.New("legacy write requires a legacy record")
 var ErrSchema2WriteSchema = errors.New("schema-2 write requires a schema-2 record")
 var ErrUnsupportedSchema = errors.New("unsupported PR schema")
 var ErrDuplicateEventID = errors.New("duplicate review event ID")
+var ErrInvalidEventObjectID = errors.New("review event has an invalid object ID")
 var ErrOpenPairConflict = errors.New("an open branch-based PR already tracks this branch pair")
 
 func New(root string) (*Store, error) {
@@ -295,8 +296,9 @@ func (s *Store) validateEventHistory(pr model.PR2, expectedMeta string) error {
 		}
 		seen[event.ID] = struct{}{}
 	}
+	previousEventCount := 0
 	if expectedMeta == "" {
-		return nil
+		return validateNewEventObjectIDs(pr.Events, previousEventCount)
 	}
 	data, err := s.showFileFromRef(expectedMeta, prFileName)
 	if err != nil {
@@ -318,12 +320,40 @@ func (s *Store) validateEventHistory(pr model.PR2, expectedMeta string) error {
 	if len(pr.Events) < len(previous.Events) {
 		return errors.New("review events are append-only")
 	}
+	previousEventCount = len(previous.Events)
 	for i := range previous.Events {
 		if !sameReviewEvent(pr.Events[i], previous.Events[i]) {
 			return errors.New("review events are immutable")
 		}
 	}
+	return validateNewEventObjectIDs(pr.Events, previousEventCount)
+}
+
+func validateNewEventObjectIDs(events []model.ReviewEvent, start int) error {
+	for _, event := range events[start:] {
+		for field, value := range map[string]string{
+			"source_head_sha": event.SourceHeadSHA,
+			"base_head_sha":   event.BaseHeadSHA,
+			"merge_base_sha":  event.MergeBaseSHA,
+		} {
+			if !isFullObjectID(value) {
+				return fmt.Errorf("%w: event %q field %s must be 40 lowercase hexadecimal characters", ErrInvalidEventObjectID, event.ID, field)
+			}
+		}
+	}
 	return nil
+}
+
+func isFullObjectID(value string) bool {
+	if len(value) != 40 {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Store) validateLegacyExpectedMeta(expectedMeta string) error {
