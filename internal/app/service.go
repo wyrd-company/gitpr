@@ -116,11 +116,11 @@ func (s *Service) CreatePR(ctx context.Context, req CreatePRRequest) (model.PR, 
 }
 
 func (s *Service) ListPRs(status string) ([]model.PR, error) {
-	return s.store.ListPRs(status)
+	return s.store.ListLegacyPRs(status)
 }
 
 func (s *Service) LoadPR(id string) (model.PR, string, error) {
-	return s.store.LoadPR(id)
+	return s.store.LoadLegacyPR(id)
 }
 
 func (s *Service) RefreshConflicts(ctx context.Context, pr model.PR) (model.PR, error) {
@@ -215,7 +215,7 @@ func (s *Service) RejectPR(id string) (model.PR, string, error) {
 }
 
 func (s *Service) MergePR(ctx context.Context, id string, cleanup bool) (model.PR, string, error) {
-	pr, _, err := s.store.LoadPR(id)
+	pr, _, err := s.store.LoadLegacyPR(id)
 	if err != nil {
 		return model.PR{}, "", err
 	}
@@ -285,7 +285,7 @@ func (s *Service) MergePR(ctx context.Context, id string, cleanup bool) (model.P
 	if s.beforeMergeHook != nil {
 		s.beforeMergeHook()
 	}
-	current, _, err := s.store.LoadPR(pr.ID)
+	current, _, err := s.store.LoadLegacyPR(pr.ID)
 	if err != nil {
 		return model.PR{}, "", err
 	}
@@ -334,7 +334,7 @@ func (s *Service) mutatePR(id string, mutate func(*model.PR) error) (model.PR, e
 
 func (s *Service) mutatePRRef(id string, mutate func(*model.PR) error) (model.PR, string, error) {
 	for attempt := 0; attempt < metadataMutationAttempts; attempt++ {
-		pr, version, err := s.store.LoadPR(id)
+		pr, version, err := s.store.LoadLegacyPR(id)
 		if err != nil {
 			return model.PR{}, "", err
 		}
@@ -352,7 +352,7 @@ func (s *Service) mutatePRRef(id string, mutate func(*model.PR) error) (model.PR
 }
 
 func (s *Service) OpenPRs() ([]model.PR, error) {
-	prs, err := s.store.ListPRs(string(model.StatusOpen))
+	prs, err := s.store.ListLegacyPRs(string(model.StatusOpen))
 	if err != nil {
 		return nil, err
 	}

@@ -107,7 +107,7 @@ func TestResolveRefForLoadUsesOneGitProcess(t *testing.T) {
 func TestLoadPRReturnsMetadataCommitVersion(t *testing.T) {
 	st, pr := newStoreTestPR(t)
 
-	_, version, err := st.LoadPR(pr.ID)
+	_, version, err := st.LoadLegacyPR(pr.ID)
 	if err != nil {
 		t.Fatalf("LoadPR() error = %v", err)
 	}
@@ -126,11 +126,11 @@ func TestSavePRRejectsStaleMetadataVersionAndPreservesWinner(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stale, staleVersion, err := stA.LoadPR(pr.ID)
+	stale, staleVersion, err := stA.LoadLegacyPR(pr.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	winner, winnerVersion, err := stB.LoadPR(pr.ID)
+	winner, winnerVersion, err := stB.LoadLegacyPR(pr.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestSavePRRejectsStaleMetadataVersionAndPreservesWinner(t *testing.T) {
 	if _, err := stA.SavePR(stale, stale.Status, staleVersion); !errors.Is(err, ErrMetadataConflict) {
 		t.Fatalf("stale SavePR() error = %v, want ErrMetadataConflict", err)
 	}
-	loaded, _, err := stA.LoadPR(pr.ID)
+	loaded, _, err := stA.LoadLegacyPR(pr.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -33,6 +33,7 @@ type Store struct {
 }
 
 var ErrMetadataConflict = errors.New("gitpr metadata changed concurrently")
+var ErrRecordSchema = errors.New("gitpr record has a different schema")
 
 func New(root string) (*Store, error) {
 	repo, err := gitutil.Open(root)
@@ -159,36 +160,205 @@ func (s *Store) SavePR(pr model.PR, previousStatus model.Status, expectedMeta st
 	return metaRef, nil
 }
 
-func (s *Store) LoadPR(id string) (model.PR, string, error) {
+func (s *Store) SavePR2(pr model.PR2, previousState model.PRState, expectedMeta string) (string, error) {
+	if strings.TrimSpace(pr.ID) == "" {
+		return "", errors.New("PR ID is required")
+	}
+	if pr.Schema != 2 {
+		return "", errors.New("schema-2 PR must have schema: 2")
+	}
+	if s.beforeSaveHook != nil {
+		s.beforeSaveHook()
+	}
+	if err := s.validateEventHistory(pr, expectedMeta); err != nil {
+		return "", err
+	}
+
+	data, err := yaml.Marshal(pr)
+	if err != nil {
+		return "", err
+	}
+	message := "gitpr: update " + pr.ID
+	if expectedMeta == "" {
+		message = "gitpr: create " + pr.ID
+	}
+	metaCommit, err := s.writeCommit(prFileName, data, expectedMeta, message)
+	if err != nil {
+		return "", err
+	}
+
+	metaRef := s.metaRef(pr.ID)
+	currentIndexRef := s.indexRef2(pr.State, pr.ID)
+	oldCurrentIndex, _ := s.resolveRef(currentIndexRef)
+	updates := []refUpdate{{Action: "update", Ref: metaRef, NewOID: metaCommit, OldOID: oidOrZero(expectedMeta)}, {
+		Action: "update", Ref: currentIndexRef, NewOID: metaCommit, OldOID: oidOrZero(oldCurrentIndex),
+	}}
+	if previousState != "" && previousState != pr.State {
+		oldRef := s.indexRef2(previousState, pr.ID)
+		if oid, err := s.resolveRef(oldRef); err == nil {
+			updates = append(updates, refUpdate{Action: "delete", Ref: oldRef, OldOID: oid})
+		}
+	}
+
+	pins := s.desiredPR2Pins(pr)
+	existing, err := s.listRefs(prRefPrefix + "/" + pr.ID + "/events")
+	if err != nil {
+		return "", err
+	}
+	anchors, err := s.listRefs(prRefPrefix + "/" + pr.ID + "/anchors")
+	if err != nil {
+		return "", err
+	}
+	existing = append(existing, anchors...)
+	for _, ref := range existing {
+		desired, keep := pins[ref.Name]
+		if !keep {
+			updates = append(updates, refUpdate{Action: "delete", Ref: ref.Name, OldOID: ref.Oid})
+			continue
+		}
+		delete(pins, ref.Name)
+		if desired != ref.Oid {
+			updates = append(updates, refUpdate{Action: "update", Ref: ref.Name, NewOID: desired, OldOID: ref.Oid})
+		}
+	}
+	for ref, oid := range pins {
+		updates = append(updates, refUpdate{Action: "update", Ref: ref, NewOID: oid, OldOID: zeroOID})
+	}
+
+	if err := s.batchUpdateRefs(updates); err != nil {
+		if isRefConflict(err) {
+			return "", fmt.Errorf("%w for PR %s", ErrMetadataConflict, pr.ID)
+		}
+		return "", err
+	}
+	return metaRef, nil
+}
+
+func (s *Store) validateEventHistory(pr model.PR2, expectedMeta string) error {
+	if expectedMeta == "" {
+		return nil
+	}
+	data, err := s.showFileFromRef(expectedMeta, prFileName)
+	if err != nil {
+		return err
+	}
+	var previous model.PR2
+	if err := yaml.Unmarshal(data, &previous); err != nil {
+		return err
+	}
+	if len(pr.Events) < len(previous.Events) {
+		return errors.New("review events are append-only")
+	}
+	for i := range previous.Events {
+		if pr.Events[i] != previous.Events[i] {
+			return errors.New("review events are immutable")
+		}
+	}
+	return nil
+}
+
+func (s *Store) desiredPR2Pins(pr model.PR2) map[string]string {
+	pins := make(map[string]string)
+	pairs := make(map[string]struct{}, len(pr.Events))
+	for _, event := range pr.Events {
+		prefix := fmt.Sprintf("%s/%s/events/%s", prRefPrefix, pr.ID, event.ID)
+		pins[prefix+"/head"] = event.SourceHeadSHA
+		pins[prefix+"/base"] = event.BaseHeadSHA
+		pairs[event.SourceHeadSHA+"\x00"+event.BaseHeadSHA] = struct{}{}
+	}
+	for _, thread := range pr.Threads {
+		if thread.Kind != model.ThreadAnchored || thread.Anchor == nil {
+			continue
+		}
+		pair := thread.Anchor.SourceHeadSHA + "\x00" + thread.Anchor.BaseHeadSHA
+		if _, recorded := pairs[pair]; recorded {
+			continue
+		}
+		prefix := fmt.Sprintf("%s/%s/anchors/%s", prRefPrefix, pr.ID, thread.ID)
+		pins[prefix+"/head"] = thread.Anchor.SourceHeadSHA
+		pins[prefix+"/base"] = thread.Anchor.BaseHeadSHA
+	}
+	return pins
+}
+
+func (s *Store) loadRecordData(id string) (string, []byte, error) {
 	resolvedID, err := s.resolvePRID(id)
 	if err != nil {
-		return model.PR{}, "", err
+		return "", nil, err
 	}
 
 	metaRef := s.metaRef(resolvedID)
 	metaVersion, exists, err := s.resolveRefForLoad(metaRef)
 	if err != nil {
-		return model.PR{}, "", err
+		return "", nil, err
 	}
 	if !exists {
-		return model.PR{}, "", fmt.Errorf("PR %q not found", id)
+		return "", nil, fmt.Errorf("PR %q not found", id)
 	}
 	data, err := s.showFileFromRef(metaVersion, prFileName)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return model.PR{}, "", fmt.Errorf("PR %q not found", id)
+			return "", nil, fmt.Errorf("PR %q not found", id)
 		}
-		return model.PR{}, "", err
+		return "", nil, err
+	}
+	return metaVersion, data, nil
+}
+
+func (s *Store) LoadPR(id string) (model.Record, string, error) {
+	metaVersion, data, err := s.loadRecordData(id)
+	if err != nil {
+		return nil, "", err
 	}
 
-	var pr model.PR
+	var discriminator struct {
+		Schema *int `yaml:"schema"`
+	}
+	if err := yaml.Unmarshal(data, &discriminator); err != nil {
+		return nil, "", err
+	}
+	if discriminator.Schema == nil {
+		var pr model.PR
+		if err := yaml.Unmarshal(data, &pr); err != nil {
+			return nil, "", err
+		}
+		return pr, metaVersion, nil
+	}
+	if *discriminator.Schema != 2 {
+		return nil, "", fmt.Errorf("unsupported PR schema %d", *discriminator.Schema)
+	}
+	var pr model.PR2
 	if err := yaml.Unmarshal(data, &pr); err != nil {
-		return model.PR{}, "", err
+		return nil, "", err
 	}
-
 	return pr, metaVersion, nil
 }
-func (s *Store) ListPRs(filter string) ([]model.PR, error) {
+
+func (s *Store) LoadLegacyPR(id string) (model.PR, string, error) {
+	record, version, err := s.LoadPR(id)
+	if err != nil {
+		return model.PR{}, "", err
+	}
+	pr, ok := record.(model.PR)
+	if !ok {
+		return model.PR{}, "", fmt.Errorf("%w: PR %q is schema 2, not legacy", ErrRecordSchema, id)
+	}
+	return pr, version, nil
+}
+
+func (s *Store) LoadPR2(id string) (model.PR2, string, error) {
+	record, version, err := s.LoadPR(id)
+	if err != nil {
+		return model.PR2{}, "", err
+	}
+	pr, ok := record.(model.PR2)
+	if !ok {
+		return model.PR2{}, "", fmt.Errorf("%w: PR %q is legacy, not schema 2", ErrRecordSchema, id)
+	}
+	return pr, version, nil
+}
+
+func (s *Store) ListPRs(filter string) ([]model.Record, error) {
 	filter = strings.ToLower(strings.TrimSpace(filter))
 	if filter == "" {
 		filter = string(model.StatusOpen)
@@ -199,7 +369,7 @@ func (s *Store) ListPRs(filter string) ([]model.PR, error) {
 		return nil, err
 	}
 
-	prs := make([]model.PR, 0, len(ids))
+	prs := make([]model.Record, 0, len(ids))
 	for _, id := range ids {
 		pr, _, err := s.LoadPR(id)
 		if err != nil {
@@ -209,8 +379,22 @@ func (s *Store) ListPRs(filter string) ([]model.PR, error) {
 	}
 
 	sort.Slice(prs, func(i, j int) bool {
-		return prs[i].ID < prs[j].ID
+		return prs[i].RecordID() < prs[j].RecordID()
 	})
+	return prs, nil
+}
+
+func (s *Store) ListLegacyPRs(filter string) ([]model.PR, error) {
+	records, err := s.ListPRs(filter)
+	if err != nil {
+		return nil, err
+	}
+	prs := make([]model.PR, 0, len(records))
+	for _, record := range records {
+		if pr, ok := record.(model.PR); ok {
+			prs = append(prs, pr)
+		}
+	}
 	return prs, nil
 }
 
@@ -334,13 +518,16 @@ func (s *Store) listIDsForFilter(filter string) ([]string, error) {
 			return nil, err
 		}
 	case "closed":
+		if err := addRefs(indexRefPrefix + "/closed/*"); err != nil {
+			return nil, err
+		}
 		if err := addRefs(indexRefPrefix + "/approved/*"); err != nil {
 			return nil, err
 		}
 		if err := addRefs(indexRefPrefix + "/rejected/*"); err != nil {
 			return nil, err
 		}
-	case "open", "approved", "rejected":
+	case "open", "approved", "rejected", "merged":
 		if err := addRefs(indexRefPrefix + "/" + filter + "/*"); err != nil {
 			return nil, err
 		}
@@ -455,6 +642,10 @@ func (s *Store) baseRef(id string) string {
 
 func (s *Store) indexRef(status model.Status, id string) string {
 	return indexRefPrefix + "/" + string(status) + "/" + id
+}
+
+func (s *Store) indexRef2(state model.PRState, id string) string {
+	return indexRefPrefix + "/" + string(state) + "/" + id
 }
 
 func prIDFromMetaRef(ref string) string {
