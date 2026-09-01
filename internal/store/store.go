@@ -42,6 +42,7 @@ var ErrUnsupportedSchema = errors.New("unsupported PR schema")
 var ErrDuplicateEventID = errors.New("duplicate review event ID")
 var ErrInvalidEventObjectID = errors.New("review event has an invalid object ID")
 var ErrOpenPairConflict = errors.New("an open branch-based PR already tracks this branch pair")
+var ErrMergeConflict = errors.New("branch-based merge transaction conflicted")
 
 func New(root string) (*Store, error) {
 	repo, err := gitutil.Open(root)
@@ -172,6 +173,19 @@ func (s *Store) SavePR(pr model.PR, previousStatus model.Status, expectedMeta st
 }
 
 func (s *Store) SavePR2(pr model.PR2, previousState model.PRState, expectedMeta string) (string, error) {
+	return s.savePR2(pr, previousState, expectedMeta, nil)
+}
+
+func (s *Store) MergePR2(pr model.PR2, expectedMeta string) (string, error) {
+	if pr.State != model.PRStateMerged || len(pr.Events) == 0 {
+		return "", errors.New("merged schema-2 PR requires a review event")
+	}
+	latest := pr.Events[len(pr.Events)-1]
+	baseUpdate := &refUpdate{Action: "update", Ref: "refs/heads/" + pr.BaseBranch, NewOID: latest.SourceHeadSHA, OldOID: latest.BaseHeadSHA}
+	return s.savePR2(pr, model.PRStateOpen, expectedMeta, baseUpdate)
+}
+
+func (s *Store) savePR2(pr model.PR2, previousState model.PRState, expectedMeta string, baseUpdate *refUpdate) (string, error) {
 	if strings.TrimSpace(pr.ID) == "" {
 		return "", errors.New("PR ID is required")
 	}
@@ -201,9 +215,13 @@ func (s *Store) SavePR2(pr model.PR2, previousState model.PRState, expectedMeta 
 	metaRef := s.metaRef(pr.ID)
 	currentIndexRef := s.indexRef2(pr.State, pr.ID)
 	oldCurrentIndex, _ := s.resolveRef(currentIndexRef)
-	updates := []refUpdate{{Action: "update", Ref: metaRef, NewOID: metaCommit, OldOID: oidOrZero(expectedMeta)}, {
+	updates := make([]refUpdate, 0, 8)
+	if baseUpdate != nil {
+		updates = append(updates, *baseUpdate)
+	}
+	updates = append(updates, refUpdate{Action: "update", Ref: metaRef, NewOID: metaCommit, OldOID: oidOrZero(expectedMeta)}, refUpdate{
 		Action: "update", Ref: currentIndexRef, NewOID: metaCommit, OldOID: oidOrZero(oldCurrentIndex),
-	}}
+	})
 	// Legacy PRs deliberately do not participate: their frozen snapshots do not
 	// own a live source/base branch pair.
 	openPairRef := s.openPairRef(pr.SourceBranch, pr.BaseBranch)
@@ -249,6 +267,9 @@ func (s *Store) SavePR2(pr model.PR2, previousState model.PRState, expectedMeta 
 
 	if err := s.batchUpdateRefs(updates); err != nil {
 		if isRefConflict(err) {
+			if baseUpdate != nil {
+				return "", fmt.Errorf("%w for PR %s", ErrMergeConflict, pr.ID)
+			}
 			if expectedMeta == "" && pr.State == model.PRStateOpen {
 				return "", fmt.Errorf("%w: %s into %s", ErrOpenPairConflict, pr.SourceBranch, pr.BaseBranch)
 			}

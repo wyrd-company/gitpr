@@ -143,6 +143,8 @@ type PR2 struct {
 	Threads            []Thread      `yaml:"threads,omitempty"`
 	CreatedAt          time.Time     `yaml:"created_at"`
 	UpdatedAt          time.Time     `yaml:"updated_at"`
+	MergedAt           *time.Time    `yaml:"merged_at,omitempty"`
+	MergedEventID      string        `yaml:"merged_event_id,omitempty"`
 	ClosedAt           *time.Time    `yaml:"closed_at,omitempty"`
 }
 
