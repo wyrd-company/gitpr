@@ -518,23 +518,37 @@ func newMergeCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 60*time.Second)
 			defer cancel()
 
-			pr, ref, err := svc.MergePR(ctx, args[0], cleanup)
+			record, ref, err := svc.MergeRecord(ctx, args[0], cleanup)
 			if err != nil {
-				if pr.ID != "" && ref != "" {
-					printMergeSuccess(cmd, pr, ref, cleanup)
-					cmd.PrintErrf("Cleanup failed after merge: %v\n", err)
-					return nil
+				if record != nil && ref != "" {
+					printMergeRecordSuccess(cmd, record, ref, cleanup)
+					if _, legacy := record.(model.PR); legacy {
+						cmd.PrintErrf("Cleanup failed after merge: %v\n", err)
+						return nil
+					}
 				}
 				return err
 			}
 
-			printMergeSuccess(cmd, pr, ref, cleanup)
+			printMergeRecordSuccess(cmd, record, ref, cleanup)
 			return nil
 		},
 	}
 
 	cmd.Flags().BoolVar(&cleanup, "cleanup", false, "Remove the source worktree and branch after a successful merge")
 	return cmd
+}
+
+func printMergeRecordSuccess(cmd *cobra.Command, record model.Record, ref string, cleanup bool) {
+	if pr, legacy := record.(model.PR); legacy {
+		printMergeSuccess(cmd, pr, ref, cleanup)
+		return
+	}
+	pr := record.(model.PR2)
+	cmd.Printf("Merged PR %s into %s at %s\n", shortID(pr.ID), pr.BaseBranch, ref)
+	if !cleanup {
+		cmd.Println("Source worktree kept.")
+	}
 }
 
 func printMergeSuccess(cmd *cobra.Command, pr model.PR, ref string, cleanup bool) {
