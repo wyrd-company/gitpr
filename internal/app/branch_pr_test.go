@@ -29,8 +29,8 @@ func TestCreatePRWritesOpenSchema2BranchRecordWithoutSnapshotState(t *testing.T)
 		t.Fatalf("round trip = %#v, %v", loaded, err)
 	}
 	assertAppRefExists(t, repoPath, "refs/gitpr/index/open/"+pr.ID)
-	if got := testGit(t, repoPath, "for-each-ref", "--format=%(refname)", "refs/gitpr/pr/"+pr.ID+"/events", "refs/gitpr/pr/"+pr.ID+"/anchors"); got != "" {
-		t.Fatalf("create wrote event/anchor refs: %s", got)
+	if got, want := testGit(t, repoPath, "for-each-ref", "--format=%(refname)", "refs/gitpr/pr/"+pr.ID), "refs/gitpr/pr/"+pr.ID+"/meta"; got != want {
+		t.Fatalf("created PR refs = %q, want metadata only %q", got, want)
 	}
 }
 
