@@ -9,6 +9,8 @@ metadata, review-event commit pins, thread-anchor pins, and state indexes live
 under `refs/gitpr/`, so linked worktrees and clones share the same records
 without a server or working-tree data directory.
 
+![gitpr local review demo](assets/demo.gif)
+
 ## Review model
 
 A pull request binds a source branch to a base branch. The record follows those
@@ -38,5 +40,3 @@ output and the TUI use shortened IDs.
 A record without a schema discriminator is a legacy snapshot from the prior
 model. gitpr refuses it and names the documented raw-git commands that read and
 remove it. In-flight work is recreated with `gitpr create`.
-
-![gitpr local review demo](assets/demo.gif)
