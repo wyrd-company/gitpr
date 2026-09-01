@@ -650,6 +650,22 @@ func (m *Model) loadOpenPRsCmd() tea.Cmd {
 		if err != nil {
 			return listLoadedMsg{err: err}
 		}
+		all, err := m.svc.ListPRs("all")
+		if err != nil {
+			return listLoadedMsg{err: err}
+		}
+		seen := make(map[string]struct{}, len(records))
+		for _, record := range records {
+			seen[record.RecordID()] = struct{}{}
+		}
+		for _, record := range all {
+			if _, exists := seen[record.RecordID()]; exists {
+				continue
+			}
+			if _, branchBased := record.(model.PR2); branchBased {
+				records = append(records, record)
+			}
+		}
 		return listLoadedMsg{records: records}
 	}
 }
