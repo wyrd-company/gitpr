@@ -192,6 +192,10 @@ gitpr merge 01K0ABCDEFGH
 gitpr merge 01K0ABCDEFGH --cleanup
 ```
 
+For branch-based PRs, a cleanup or base-worktree refresh failure after the
+atomic merge exits non-zero and reports the repair command. Legacy PRs preserve
+their historical exit-zero behavior for post-merge cleanup failure.
+
 Merge refuses if the source branch was deleted or moved past the reviewed
 `source_head_sha`. Reject the stale PR and create a new PR from the current
 branch head so the revised snapshot receives review.
