@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wyrd-company/gitpr/internal/model"
 	"github.com/wyrd-company/gitpr/internal/store"
@@ -114,6 +115,27 @@ func TestBranchCommentThreadCommandsAndAnchorRefsUseStdout(t *testing.T) {
 			if !strings.Contains(show, want) {
 				t.Errorf("show missing %q", want)
 			}
+		}
+	})
+}
+
+func TestLegacyCommentsOutputRemainsByteIdentical(t *testing.T) {
+	dir := newCLITestRepo(t)
+	withinDir(t, dir, func() {
+		st, err := store.New(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		head := cliGit(t, dir, "rev-parse", "HEAD")
+		base := cliGit(t, dir, "rev-parse", "refs/heads/main")
+		created := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+		pr := model.PR{ID: "01LEGACYCOMMENTGOLDEN000000", Title: "Legacy discussion", SourceBranch: "feature", BaseBranch: "main", SourceHeadSHA: head, BaseHeadSHA: base, Status: model.StatusOpen, Comments: []model.Comment{{FilePath: "sample.txt", LineStart: 2, LineEnd: 2, Comment: "legacy body", CommitSHA: head, CreatedAt: created}}}
+		if _, err := st.SavePR(pr, "", ""); err != nil {
+			t.Fatal(err)
+		}
+		want := "id: 01LEGACYCOMMENTGOLDEN000000\ntitle: Legacy discussion\nstatus: open\ncomments:\n    - file_path: sample.txt\n      line_start: 2\n      line_end: 2\n      comment: legacy body\n      commit_sha: " + head + "\n      created_at: 2025-01-02T03:04:05Z\n"
+		if got := executeCLI(t, "comments", pr.ID); got != want {
+			t.Fatalf("legacy comments output:\n%s\nwant:\n%s", got, want)
 		}
 	})
 }
