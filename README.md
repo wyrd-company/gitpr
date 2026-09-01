@@ -248,6 +248,8 @@ gitpr debug export <legacy-pr-id> --ref base --to /tmp/gitpr-base
 
 ## Development
 
+Run `task uat:setup` to prepare the manual acceptance flow.
+
 ```bash
 task build
 task check
