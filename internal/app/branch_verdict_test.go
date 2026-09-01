@@ -2,12 +2,10 @@ package app
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 
 	"github.com/wyrd-company/gitpr/internal/model"
-	"github.com/wyrd-company/gitpr/internal/store"
 )
 
 func TestApprovePRAppendsExactEventsPinsAndReleasesMatchingAnchors(t *testing.T) {
@@ -15,7 +13,7 @@ func TestApprovePRAppendsExactEventsPinsAndReleasesMatchingAnchors(t *testing.T)
 	pr, _, _ := service.CreatePR(context.Background(), CreatePRRequest{Title: "Verdict", Worktree: repoPath})
 	basis, _ := service.ReviewPR(context.Background(), pr.ID)
 	baseBefore := testGit(t, repoPath, "rev-parse", "refs/heads/main")
-	stored, version, _ := service.store.LoadPR2(pr.ID)
+	stored, version, _ := service.store.LoadPR(pr.ID)
 	stored.Threads = []model.Thread{{ID: "01ANCHORVERDICT00000000000", Kind: model.ThreadAnchored, Status: model.ThreadOpen, Anchor: &model.ThreadAnchor{SourceHeadSHA: basis.Basis.SourceHeadSHA, BaseHeadSHA: basis.Basis.BaseHeadSHA, File: "sample.txt", Side: model.DiffSideSource, LineStart: 2, LineEnd: 2}}}
 	if _, err := service.store.SavePR2(stored, stored.State, version); err != nil {
 		t.Fatal(err)
@@ -93,7 +91,7 @@ func TestApprovePRRefusesSideSpecificDriftWithoutMutation(t *testing.T) {
 					t.Errorf("error %q missing %q", err, want)
 				}
 			}
-			loaded, _, _ := service.store.LoadPR2(pr.ID)
+			loaded, _, _ := service.store.LoadPR(pr.ID)
 			if len(loaded.Events) != 0 {
 				t.Fatalf("drift appended events: %#v", loaded.Events)
 			}
@@ -112,11 +110,11 @@ func TestRejectPR2RecordsExpectedPairDespiteLiveDrift(t *testing.T) {
 	heads := ExpectedHeads{Source: report.Basis.SourceHeadSHA, Base: report.Basis.BaseHeadSHA}
 	testGit(t, dir, "checkout", "main")
 	testGit(t, dir, "branch", "-D", "feature")
-	record, _, err := service.RejectRecord(context.Background(), pr.ID, &heads)
+	record, _, err := service.RejectPR(context.Background(), pr.ID, &heads)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := record.(model.PR2)
+	got := record
 	if len(got.Events) != 1 || got.Events[0].Verdict != model.VerdictRejected || got.Events[0].SourceHeadSHA != heads.Source || got.Events[0].BaseHeadSHA != heads.Base {
 		t.Fatalf("rejected event = %#v", got.Events)
 	}
@@ -127,7 +125,7 @@ func TestRejectPR2RefusesUnresolvableExpectedCommit(t *testing.T) {
 	pr, _, _ := service.CreatePR(context.Background(), CreatePRRequest{Title: "Reject", Worktree: dir})
 	report, _ := service.ReviewPR(context.Background(), pr.ID)
 	heads := ExpectedHeads{Source: strings.Repeat("f", 40), Base: report.Basis.BaseHeadSHA}
-	if _, _, err := service.RejectRecord(context.Background(), pr.ID, &heads); err == nil || !strings.Contains(err.Error(), "source") || !strings.Contains(err.Error(), "does not resolve to a commit") {
+	if _, _, err := service.RejectPR(context.Background(), pr.ID, &heads); err == nil || !strings.Contains(err.Error(), "source") || !strings.Contains(err.Error(), "does not resolve to a commit") {
 		t.Fatalf("reject invalid object error = %v", err)
 	}
 }
@@ -137,7 +135,7 @@ func TestRejectPR2RefusesBranchNamesBeforeRefWrite(t *testing.T) {
 	pr, _, _ := service.CreatePR(context.Background(), CreatePRRequest{Title: "Object IDs", Worktree: dir})
 	before := testGit(t, dir, "for-each-ref", "--format=%(refname) %(objectname)")
 	heads := ExpectedHeads{Source: "feature", Base: "main"}
-	if _, _, err := service.RejectRecord(context.Background(), pr.ID, &heads); err == nil || !strings.Contains(err.Error(), "40-character lowercase hexadecimal") || !strings.Contains(err.Error(), "paste the basis") {
+	if _, _, err := service.RejectPR(context.Background(), pr.ID, &heads); err == nil || !strings.Contains(err.Error(), "40-character lowercase hexadecimal") || !strings.Contains(err.Error(), "paste the basis") {
 		t.Fatalf("reject branch-name error = %v", err)
 	}
 	after := testGit(t, dir, "for-each-ref", "--format=%(refname) %(objectname)")
@@ -162,7 +160,7 @@ func TestBranchVerdictsRefuseShortAndRevisionExpectedHeadsBeforeRefWrite(t *test
 				if verdict == "approve" {
 					_, _, err = service.ApprovePR(context.Background(), pr.ID, heads)
 				} else {
-					_, _, err = service.RejectRecord(context.Background(), pr.ID, &heads)
+					_, _, err = service.RejectPR(context.Background(), pr.ID, &heads)
 				}
 				if err == nil || !strings.Contains(err.Error(), "paste the basis") {
 					t.Fatalf("%s heads %#v error = %v", verdict, heads, err)
@@ -183,11 +181,11 @@ func TestBranchVerdictsRequireCompleteReviewedPair(t *testing.T) {
 		if _, _, err := service.ApprovePR(context.Background(), pr.ID, heads); err == nil || !strings.Contains(err.Error(), "gitpr review") {
 			t.Errorf("approve heads %#v error = %v", heads, err)
 		}
-		if _, _, err := service.RejectRecord(context.Background(), pr.ID, &heads); err == nil || !strings.Contains(err.Error(), "gitpr review") {
+		if _, _, err := service.RejectPR(context.Background(), pr.ID, &heads); err == nil || !strings.Contains(err.Error(), "gitpr review") {
 			t.Errorf("reject heads %#v error = %v", heads, err)
 		}
 	}
-	if _, _, err := service.RejectRecord(context.Background(), pr.ID, nil); err == nil || !strings.Contains(err.Error(), "gitpr review") {
+	if _, _, err := service.RejectPR(context.Background(), pr.ID, nil); err == nil || !strings.Contains(err.Error(), "gitpr review") {
 		t.Errorf("reject nil heads error = %v", err)
 	}
 }
@@ -203,11 +201,11 @@ func TestBranchVerdictsRefuseTerminalRecords(t *testing.T) {
 				if _, _, err := service.ApprovePR(context.Background(), pr.ID, heads); err != nil {
 					t.Fatal(err)
 				}
-				if _, _, err := service.mergeBranchPR(context.Background(), pr.ID, false); err != nil {
+				if _, _, err := service.MergePR(context.Background(), pr.ID, false); err != nil {
 					t.Fatal(err)
 				}
 			} else {
-				stored, version, _ := service.store.LoadPR2(pr.ID)
+				stored, version, _ := service.store.LoadPR(pr.ID)
 				stored.State = state
 				stored.Closure = &model.Closure{Reason: model.ClosureAbandoned}
 				if _, err := service.store.SavePR2(stored, model.PRStateOpen, version); err != nil {
@@ -217,45 +215,18 @@ func TestBranchVerdictsRefuseTerminalRecords(t *testing.T) {
 			if _, _, err := service.ApprovePR(context.Background(), pr.ID, heads); err == nil || !strings.Contains(err.Error(), "only while open") {
 				t.Errorf("approve terminal error = %v", err)
 			}
-			if _, _, err := service.RejectRecord(context.Background(), pr.ID, &heads); err == nil || !strings.Contains(err.Error(), "only while open") {
+			if _, _, err := service.RejectPR(context.Background(), pr.ID, &heads); err == nil || !strings.Contains(err.Error(), "only while open") {
 				t.Errorf("reject terminal error = %v", err)
 			}
 		})
 	}
 }
 
-func TestApprovePRRefusesLegacyRecordWithNewVerbDiagnostic(t *testing.T) {
-	service, legacy := newTestPR(t)
-	if _, _, err := service.ApprovePR(context.Background(), legacy.ID, ExpectedHeads{Source: legacy.SourceHeadSHA, Base: legacy.BaseHeadSHA}); err == nil || !strings.Contains(err.Error(), "branch-based") || !strings.Contains(err.Error(), "legacy") {
-		t.Fatalf("legacy approve error = %v", err)
-	}
-}
-
-func TestRejectRecordPreservesLegacyRejectBehaviorWithoutReviewedHeads(t *testing.T) {
-	service, legacy := newTestPR(t)
-	record, _, err := service.RejectRecord(context.Background(), legacy.ID, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, ok := record.(model.PR)
-	if !ok || got.Status != model.StatusRejected {
-		t.Fatalf("legacy rejected record = %#v", record)
-	}
-}
-
-func TestRejectRecordRefusesExpectedHeadFlagsForLegacyRecord(t *testing.T) {
-	service, legacy := newTestPR(t)
-	heads := ExpectedHeads{Source: legacy.SourceHeadSHA, Base: legacy.BaseHeadSHA}
-	if _, _, err := service.RejectRecord(context.Background(), legacy.ID, &heads); err == nil || !strings.Contains(err.Error(), "branch-based") || !strings.Contains(err.Error(), "legacy") {
-		t.Fatalf("legacy reject with flags error = %v", err)
-	}
-}
-
 func TestRejectPRSchema2UsesMandatoryPairGuidance(t *testing.T) {
 	dir, service := newBranchService(t)
 	pr, _, _ := service.CreatePR(context.Background(), CreatePRRequest{Title: "TUI reject", Worktree: dir})
-	if _, _, err := service.RejectPR(pr.ID); err == nil || errors.Is(err, store.ErrRecordSchema) || !strings.Contains(err.Error(), "gitpr review") {
-		t.Fatalf("RejectPR schema-2 error = %v", err)
+	if _, _, err := service.RejectPR(context.Background(), pr.ID, nil); err == nil || !strings.Contains(err.Error(), "gitpr review") {
+		t.Fatalf("RejectPR without a reviewed pair error = %v", err)
 	}
 }
 

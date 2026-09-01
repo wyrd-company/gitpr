@@ -37,8 +37,7 @@ type Store struct {
 }
 
 var ErrMetadataConflict = errors.New("gitpr metadata changed concurrently")
-var ErrRecordSchema = errors.New("gitpr record has a different schema")
-var ErrLegacyWriteSchema = errors.New("legacy write requires a legacy record")
+var ErrLegacyRecord = errors.New("gitpr record is a legacy snapshot")
 var ErrSchema2WriteSchema = errors.New("schema-2 write requires a schema-2 record")
 var ErrUnsupportedSchema = errors.New("unsupported PR schema")
 var ErrDuplicateEventID = errors.New("duplicate review event ID")
@@ -94,87 +93,6 @@ func (s *Store) SaveConfig(cfg model.Config) error {
 			OldOID: oidOrZero(oldMeta),
 		},
 	})
-}
-
-func (s *Store) SavePR(pr model.PR, previousStatus model.Status, expectedMeta string) (string, error) {
-	if strings.TrimSpace(pr.ID) == "" {
-		return "", errors.New("PR ID is required")
-	}
-	if s.beforeSaveHook != nil {
-		s.beforeSaveHook()
-	}
-	if err := s.validateLegacyExpectedMeta(expectedMeta); err != nil {
-		return "", err
-	}
-
-	metaRef := s.metaRef(pr.ID)
-	oldHead, _ := s.resolveRef(s.headRef(pr.ID))
-	oldBase, _ := s.resolveRef(s.baseRef(pr.ID))
-	currentStatusRef := s.indexRef(pr.Status, pr.ID)
-	oldCurrentIndex, _ := s.resolveRef(currentStatusRef)
-
-	data, err := yaml.Marshal(pr)
-	if err != nil {
-		return "", err
-	}
-
-	message := "gitpr: update " + pr.ID
-	if expectedMeta == "" {
-		message = "gitpr: create " + pr.ID
-	}
-
-	metaCommit, err := s.writeCommit(prFileName, data, expectedMeta, message)
-	if err != nil {
-		return "", err
-	}
-
-	updates := []refUpdate{
-		{
-			Action: "update",
-			Ref:    metaRef,
-			NewOID: metaCommit,
-			OldOID: oidOrZero(expectedMeta),
-		},
-		{
-			Action: "update",
-			Ref:    s.headRef(pr.ID),
-			NewOID: pr.SourceHeadSHA,
-			OldOID: oidOrZero(oldHead),
-		},
-		{
-			Action: "update",
-			Ref:    s.baseRef(pr.ID),
-			NewOID: pr.BaseHeadSHA,
-			OldOID: oidOrZero(oldBase),
-		},
-		{
-			Action: "update",
-			Ref:    currentStatusRef,
-			NewOID: metaCommit,
-			OldOID: oidOrZero(oldCurrentIndex),
-		},
-	}
-
-	if previousStatus != "" && previousStatus != pr.Status {
-		previousStatusRef := s.indexRef(previousStatus, pr.ID)
-		oldPreviousIndex, _ := s.resolveRef(previousStatusRef)
-		if oldPreviousIndex != "" {
-			updates = append(updates, refUpdate{
-				Action: "delete",
-				Ref:    previousStatusRef,
-				OldOID: oldPreviousIndex,
-			})
-		}
-	}
-
-	if err := s.batchUpdateRefs(updates); err != nil {
-		if isRefConflict(err) {
-			return "", fmt.Errorf("%w for PR %s", ErrMetadataConflict, pr.ID)
-		}
-		return "", err
-	}
-
-	return metaRef, nil
 }
 
 func (s *Store) SavePR2(pr model.PR2, previousState model.PRState, expectedMeta string) (string, error) {
@@ -265,8 +183,6 @@ func (s *Store) savePR2(pr model.PR2, previousState model.PRState, expectedMeta 
 	updates = append(updates, refUpdate{Action: "update", Ref: metaRef, NewOID: metaCommit, OldOID: oidOrZero(expectedMeta)}, refUpdate{
 		Action: "update", Ref: currentIndexRef, NewOID: metaCommit, OldOID: oidOrZero(oldCurrentIndex),
 	})
-	// Legacy PRs deliberately do not participate: their frozen snapshots do not
-	// own a live source/base branch pair.
 	openPairRef := s.openPairRef(pr.SourceBranch, pr.BaseBranch)
 	if expectedMeta == "" && pr.State == model.PRStateOpen {
 		updates = append(updates, refUpdate{Action: "update", Ref: openPairRef, NewOID: metaCommit, OldOID: zeroOID})
@@ -363,22 +279,6 @@ func (s *Store) DeletePR2(pr model.PR2, expectedMeta string) error {
 	return nil
 }
 
-func (s *Store) DeletePR(pr model.PR, expectedMeta string) error {
-	updates := []refUpdate{{Action: "delete", Ref: s.metaRef(pr.ID), OldOID: expectedMeta}}
-	for _, ref := range []string{s.headRef(pr.ID), s.baseRef(pr.ID), s.indexRef(pr.Status, pr.ID)} {
-		if oid, err := s.resolveRef(ref); err == nil {
-			updates = append(updates, refUpdate{Action: "delete", Ref: ref, OldOID: oid})
-		}
-	}
-	if err := s.batchUpdateRefs(updates); err != nil {
-		if isRefConflict(err) {
-			return fmt.Errorf("%w for PR %s", ErrMetadataConflict, pr.ID)
-		}
-		return err
-	}
-	return nil
-}
-
 func (s *Store) validateEventHistory(pr model.PR2, expectedMeta string) error {
 	seen := make(map[string]struct{}, len(pr.Events))
 	for _, event := range pr.Events {
@@ -447,26 +347,6 @@ func isFullObjectID(value string) bool {
 	return true
 }
 
-func (s *Store) validateLegacyExpectedMeta(expectedMeta string) error {
-	if expectedMeta == "" {
-		return nil
-	}
-	data, err := s.showFileFromRef(expectedMeta, prFileName)
-	if err != nil {
-		return err
-	}
-	var discriminator struct {
-		Schema *int `yaml:"schema"`
-	}
-	if err := yaml.Unmarshal(data, &discriminator); err != nil {
-		return err
-	}
-	if discriminator.Schema != nil {
-		return fmt.Errorf("%w: prior metadata has schema %d", ErrLegacyWriteSchema, *discriminator.Schema)
-	}
-	return nil
-}
-
 func sameReviewEvent(left, right model.ReviewEvent) bool {
 	return left.ID == right.ID &&
 		left.SourceHeadSHA == right.SourceHeadSHA &&
@@ -525,102 +405,73 @@ func (s *Store) loadRecordData(id string) (string, []byte, error) {
 	return metaVersion, data, nil
 }
 
-func (s *Store) LoadPR(id string) (model.Record, string, error) {
+func (s *Store) LoadPR(id string) (model.PR2, string, error) {
 	metaVersion, data, err := s.loadRecordData(id)
 	if err != nil {
-		return nil, "", err
+		return model.PR2{}, "", err
 	}
 
 	var discriminator struct {
 		Schema *int `yaml:"schema"`
 	}
 	if err := yaml.Unmarshal(data, &discriminator); err != nil {
-		return nil, "", err
+		return model.PR2{}, "", err
 	}
 	if discriminator.Schema == nil {
-		var pr model.PR
-		if err := yaml.Unmarshal(data, &pr); err != nil {
-			return nil, "", err
-		}
-		return pr, metaVersion, nil
+		return model.PR2{}, "", fmt.Errorf("%w: %s", ErrLegacyRecord, legacyRecordGuidance(id))
 	}
 	if *discriminator.Schema != 2 {
-		return nil, "", fmt.Errorf("%w %d", ErrUnsupportedSchema, *discriminator.Schema)
+		return model.PR2{}, "", fmt.Errorf("%w %d", ErrUnsupportedSchema, *discriminator.Schema)
 	}
 	var pr model.PR2
 	if err := yaml.Unmarshal(data, &pr); err != nil {
-		return nil, "", err
+		return model.PR2{}, "", err
 	}
 	return pr, metaVersion, nil
 }
 
-func (s *Store) LoadLegacyPR(id string) (model.PR, string, error) {
-	record, version, err := s.LoadPR(id)
-	if err != nil {
-		return model.PR{}, "", err
-	}
-	pr, ok := record.(model.PR)
-	if !ok {
-		return model.PR{}, "", fmt.Errorf("%w: PR %q is schema 2, not legacy", ErrRecordSchema, id)
-	}
-	return pr, version, nil
+// legacyRecordGuidance names the documented raw-git retrieval and removal path
+// for a schema-absent record. gitpr no longer reads or mutates those records,
+// so this text is the only discovery path for a holder of one.
+func legacyRecordGuidance(id string) string {
+	return fmt.Sprintf(
+		"PR %q predates the branch-based model and gitpr no longer reads it; "+
+			"read it with `git show refs/gitpr/pr/<full-id>/meta:pr.yaml`, "+
+			"recreate the review with `gitpr create`, and remove the record with the commands in "+
+			"the \"Legacy records\" section of the gitpr README and docs/usage.md",
+		id,
+	)
 }
 
-func (s *Store) LoadPR2(id string) (model.PR2, string, error) {
-	record, version, err := s.LoadPR(id)
-	if err != nil {
-		return model.PR2{}, "", err
-	}
-	pr, ok := record.(model.PR2)
-	if !ok {
-		return model.PR2{}, "", fmt.Errorf("%w: PR %q is legacy, not schema 2", ErrRecordSchema, id)
-	}
-	return pr, version, nil
-}
-
-func (s *Store) ListPRs(filter string) ([]model.Record, error) {
+func (s *Store) ListPRs(filter string) ([]model.PR2, int, error) {
 	filter = strings.ToLower(strings.TrimSpace(filter))
 	if filter == "" {
-		filter = string(model.StatusOpen)
+		filter = string(model.PRStateOpen)
 	}
 
 	ids, err := s.listIDsForFilter(filter)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	prs := make([]model.Record, 0, len(ids))
+	prs := make([]model.PR2, 0, len(ids))
+	skipped := 0
 	for _, id := range ids {
 		pr, _, err := s.LoadPR(id)
 		if err != nil {
-			if errors.Is(err, ErrUnsupportedSchema) {
+			if errors.Is(err, ErrUnsupportedSchema) || errors.Is(err, ErrLegacyRecord) {
+				skipped++
 				continue
 			}
-			return nil, err
+			return nil, 0, err
 		}
 		prs = append(prs, pr)
 	}
 
 	sort.Slice(prs, func(i, j int) bool {
-		return prs[i].RecordID() < prs[j].RecordID()
+		return prs[i].ID < prs[j].ID
 	})
-	return prs, nil
-}
-
-func (s *Store) ListLegacyPRs(filter string) ([]model.PR, error) {
-	// Temporary compatibility narrowing: increment 6 rewires service listing to
-	// consume schema-dispatched records before schema-2 creation becomes public.
-	records, err := s.ListPRs(filter)
-	if err != nil {
-		return nil, err
-	}
-	prs := make([]model.PR, 0, len(records))
-	for _, record := range records {
-		if pr, ok := record.(model.PR); ok {
-			prs = append(prs, pr)
-		}
-	}
-	return prs, nil
+	return prs, skipped, nil
 }
 
 func (s *Store) ExportPR(id, which, targetDir string) error {
@@ -629,17 +480,12 @@ func (s *Store) ExportPR(id, which, targetDir string) error {
 		return err
 	}
 
-	var ref string
 	switch strings.ToLower(strings.TrimSpace(which)) {
 	case "", "meta":
-		ref = s.metaRef(resolvedID)
-	case "head":
-		ref = s.headRef(resolvedID)
-	case "base":
-		ref = s.baseRef(resolvedID)
 	default:
 		return fmt.Errorf("unsupported export ref %q", which)
 	}
+	ref := s.metaRef(resolvedID)
 
 	resolvedRef, err := s.resolveRef(ref)
 	if err != nil {
@@ -742,7 +588,7 @@ func (s *Store) listIDsForFilter(filter string) ([]string, error) {
 		if err := addRefs(prRefPrefix + "/*/meta"); err != nil {
 			return nil, err
 		}
-	case "open", "approved", "rejected", "merged", "closed":
+	case "open", "merged", "closed":
 		if err := addRefs(indexRefPrefix + "/" + filter + "/*"); err != nil {
 			return nil, err
 		}
@@ -845,18 +691,6 @@ func (s *Store) writeCommit(fileName string, data []byte, parent, message string
 
 func (s *Store) metaRef(id string) string {
 	return prRefPrefix + "/" + id + "/meta"
-}
-
-func (s *Store) headRef(id string) string {
-	return prRefPrefix + "/" + id + "/head"
-}
-
-func (s *Store) baseRef(id string) string {
-	return prRefPrefix + "/" + id + "/base"
-}
-
-func (s *Store) indexRef(status model.Status, id string) string {
-	return indexRefPrefix + "/" + string(status) + "/" + id
 }
 
 func (s *Store) indexRef2(state model.PRState, id string) string {

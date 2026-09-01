@@ -27,19 +27,12 @@ type DeleteSummary struct {
 }
 
 func (s *Service) ClosePR(id string, req ClosePRRequest) (model.PR2, string, error) {
-	record, _, err := s.store.LoadPR(id)
-	if err != nil {
-		return model.PR2{}, "", err
-	}
-	if _, legacy := record.(model.PR); legacy {
-		return model.PR2{}, "", errors.New("close is available only for branch-based PRs; legacy records retain their historical status workflow")
-	}
 	closure, err := s.validateClosure(id, req)
 	if err != nil {
 		return model.PR2{}, "", err
 	}
 	for attempt := 0; attempt < metadataMutationAttempts; attempt++ {
-		pr, version, err := s.store.LoadPR2(id)
+		pr, version, err := s.store.LoadPR(id)
 		if err != nil {
 			return model.PR2{}, "", err
 		}
@@ -105,7 +98,7 @@ func (s *Service) validateClosure(id string, req ClosePRRequest) (*model.Closure
 		if closure.ReplacingPRID == id {
 			return nil, errors.New("--superseded-by cannot name the PR being closed for --reason superseded")
 		}
-		if _, _, err := s.store.LoadPR2(closure.ReplacingPRID); err != nil {
+		if _, _, err := s.store.LoadPR(closure.ReplacingPRID); err != nil {
 			return nil, fmt.Errorf("--superseded-by must name an existing branch-based PR: %w", err)
 		}
 	case model.ClosureAbandoned:
@@ -128,51 +121,37 @@ func (s *Service) validateClosure(id string, req ClosePRRequest) (*model.Closure
 }
 
 func (s *Service) DeleteRecordSummary(id string) (DeleteSummary, error) {
-	record, _, err := s.store.LoadPR(id)
+	pr, _, err := s.store.LoadPR(id)
 	if err != nil {
 		return DeleteSummary{}, err
 	}
-	summary := DeleteSummary{ID: record.RecordID(), State: record.RecordDisplayState()}
-	if pr, ok := record.(model.PR2); ok {
-		summary.EventCount = len(pr.Events)
-		summary.ThreadCount = len(pr.Threads)
-	} else if pr, ok := record.(model.PR); ok {
-		summary.ThreadCount = len(pr.Comments)
-	}
-	return summary, nil
+	return DeleteSummary{ID: pr.ID, State: string(pr.State), EventCount: len(pr.Events), ThreadCount: len(pr.Threads)}, nil
 }
 
-func (s *Service) ListPRsWithReason(state string, reason model.ClosureReason) ([]model.Record, error) {
+func (s *Service) ListPRsWithReason(state string, reason model.ClosureReason) ([]model.PR2, int, error) {
 	if reason == "" {
 		return s.store.ListPRs(state)
 	}
 	if state != string(model.PRStateClosed) {
-		return nil, errors.New("--reason can be combined only with --state closed")
+		return nil, 0, errors.New("--reason can be combined only with --state closed")
 	}
-	records, err := s.store.ListPRs(state)
+	records, skipped, err := s.store.ListPRs(state)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	result := make([]model.Record, 0)
-	for _, record := range records {
-		if pr, ok := record.(model.PR2); ok && pr.Closure != nil && pr.Closure.Reason == reason {
+	result := make([]model.PR2, 0)
+	for _, pr := range records {
+		if pr.Closure != nil && pr.Closure.Reason == reason {
 			result = append(result, pr)
 		}
 	}
-	return result, nil
+	return result, skipped, nil
 }
 
 func (s *Service) DeleteRecord(id string) error {
-	record, version, err := s.store.LoadPR(id)
+	pr, version, err := s.store.LoadPR(id)
 	if err != nil {
 		return err
 	}
-	switch pr := record.(type) {
-	case model.PR2:
-		return s.store.DeletePR2(pr, version)
-	case model.PR:
-		return s.store.DeletePR(pr, version)
-	default:
-		return fmt.Errorf("unsupported record type %T", record)
-	}
+	return s.store.DeletePR2(pr, version)
 }

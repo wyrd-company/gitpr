@@ -20,11 +20,11 @@ func TestMergePR2BaseMovementDuringTransactionLeavesRecordOpen(t *testing.T) {
 		service.store.SetBeforeSaveHook(nil)
 		testGit(t, dir, "update-ref", "refs/heads/main", event.SourceHeadSHA, event.BaseHeadSHA)
 	})
-	_, _, err := service.mergeBranchPR(context.Background(), pr.ID, false)
+	_, _, err := service.MergePR(context.Background(), pr.ID, false)
 	if err == nil || !errors.Is(err, store.ErrMergeConflict) || !strings.Contains(err.Error(), "review") || !strings.Contains(err.Error(), "retry") {
 		t.Fatalf("racing merge error = %v", err)
 	}
-	loaded, _, _ := service.store.LoadPR2(pr.ID)
+	loaded, _, _ := service.store.LoadPR(pr.ID)
 	if loaded.State != model.PRStateOpen || loaded.MergedAt != nil || loaded.MergedEventID != "" {
 		t.Fatalf("racing merge metadata = %#v", loaded)
 	}
@@ -45,7 +45,7 @@ func TestMergePR2RefreshFailureReportsCompletedMergeAndRepairCommand(t *testing.
 		service.store.SetBeforeSaveHook(nil)
 		testGit(t, dir, "worktree", "remove", "--force", basePath)
 	})
-	merged, ref, err := service.mergeBranchPR(context.Background(), pr.ID, false)
+	merged, ref, err := service.MergePR(context.Background(), pr.ID, false)
 	if err == nil || merged.State != model.PRStateMerged || ref == "" || !strings.Contains(err.Error(), "merge succeeded") || !strings.Contains(err.Error(), basePath) || !strings.Contains(err.Error(), "reset --hard "+event.SourceHeadSHA) {
 		t.Fatalf("refresh failure result = %#v, ref=%q, err=%v", merged, ref, err)
 	}
@@ -63,15 +63,15 @@ func TestMergePR2ConcurrentVerdictWinsWithoutBaseAdvance(t *testing.T) {
 	heads := ExpectedHeads{Source: event.SourceHeadSHA, Base: event.BaseHeadSHA}
 	serviceA.store.SetBeforeSaveHook(func() {
 		serviceA.store.SetBeforeSaveHook(nil)
-		if _, _, err := serviceB.RejectRecord(context.Background(), pr.ID, &heads); err != nil {
+		if _, _, err := serviceB.RejectPR(context.Background(), pr.ID, &heads); err != nil {
 			t.Errorf("concurrent reject: %v", err)
 		}
 	})
-	_, _, err = serviceA.mergeBranchPR(context.Background(), pr.ID, false)
+	_, _, err = serviceA.MergePR(context.Background(), pr.ID, false)
 	if err == nil || !errors.Is(err, store.ErrMergeConflict) {
 		t.Fatalf("concurrent verdict merge error = %v", err)
 	}
-	loaded, _, _ := serviceA.store.LoadPR2(pr.ID)
+	loaded, _, _ := serviceA.store.LoadPR(pr.ID)
 	if loaded.State != model.PRStateOpen || len(loaded.Events) != 2 || loaded.Events[1].Verdict != model.VerdictRejected {
 		t.Fatalf("winner record = %#v", loaded)
 	}
@@ -88,7 +88,7 @@ func TestMergePR2NewDirtyWorktreeSkipsRefreshAfterCompletedMerge(t *testing.T) {
 		service.store.SetBeforeSaveHook(nil)
 		writeTestFile(t, basePath, "late.txt", "late change\n")
 	})
-	merged, ref, err := service.mergeBranchPR(context.Background(), pr.ID, false)
+	merged, ref, err := service.MergePR(context.Background(), pr.ID, false)
 	if err == nil || merged.State != model.PRStateMerged || ref == "" || !strings.Contains(err.Error(), "merge succeeded") || !strings.Contains(err.Error(), "newly dirty") || !strings.Contains(err.Error(), "reset --hard "+event.SourceHeadSHA) {
 		t.Fatalf("dirty-window result = %#v ref=%q err=%v", merged, ref, err)
 	}

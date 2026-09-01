@@ -40,7 +40,7 @@ type ReviewReport struct {
 }
 
 func (s *Service) ReviewPR(ctx context.Context, id string) (ReviewReport, error) {
-	pr, _, err := s.store.LoadPR2(id)
+	pr, _, err := s.store.LoadPR(id)
 	if err != nil {
 		return ReviewReport{}, err
 	}

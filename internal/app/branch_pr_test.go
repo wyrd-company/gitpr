@@ -2,14 +2,12 @@ package app
 
 import (
 	"context"
-	"errors"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/wyrd-company/gitpr/internal/model"
-	"github.com/wyrd-company/gitpr/internal/store"
 )
 
 func TestCreatePRWritesOpenSchema2BranchRecordWithoutSnapshotState(t *testing.T) {
@@ -24,7 +22,7 @@ func TestCreatePRWritesOpenSchema2BranchRecordWithoutSnapshotState(t *testing.T)
 	if len(pr.Events) != 0 || len(pr.Threads) != 0 {
 		t.Fatalf("create stored review state: events=%d threads=%d", len(pr.Events), len(pr.Threads))
 	}
-	loaded, _, err := service.store.LoadPR2(pr.ID)
+	loaded, _, err := service.store.LoadPR(pr.ID)
 	if err != nil || !reflect.DeepEqual(loaded, pr) {
 		t.Fatalf("round trip = %#v, %v", loaded, err)
 	}
@@ -46,7 +44,7 @@ func TestCreatePRRefusesDuplicateOpenPairButAllowsTerminalPredecessor(t *testing
 	if _, _, err := service.CreatePR(context.Background(), CreatePRRequest{Title: "Duplicate", Worktree: repoPath}); err == nil || !strings.Contains(err.Error(), first.ID) {
 		t.Fatalf("duplicate create error = %v", err)
 	}
-	stored, version, _ := service.store.LoadPR2(first.ID)
+	stored, version, _ := service.store.LoadPR(first.ID)
 	stored.State = model.PRStateClosed
 	stored.Closure = &model.Closure{Reason: model.ClosureAbandoned}
 	if _, err := service.store.SavePR2(stored, model.PRStateOpen, version); err != nil {
@@ -64,7 +62,7 @@ func TestCreatePRRefusesDuplicateOpenPairButAllowsTerminalPredecessor(t *testing
 	if _, _, err := service.ApprovePR(context.Background(), second.ID, heads); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := service.mergeBranchPR(context.Background(), second.ID, false); err != nil {
+	if _, _, err := service.MergePR(context.Background(), second.ID, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := service.CreatePR(context.Background(), CreatePRRequest{Title: "After merge", Worktree: repoPath}); err != nil {
@@ -92,13 +90,6 @@ func TestReviewPRReportsLiveBasisDiffContainmentAndMachinePair(t *testing.T) {
 	}
 	if len(report.Diff) != 1 || report.Diff[0].NewPath != "sample.txt" || !strings.Contains(report.Diff[0].Patch, "+feature") {
 		t.Fatalf("review diff = %#v", report.Diff)
-	}
-}
-
-func TestReviewPRRefusesLegacyRecord(t *testing.T) {
-	service, legacy := newTestPR(t)
-	if _, err := service.ReviewPR(context.Background(), legacy.ID); !errors.Is(err, store.ErrRecordSchema) {
-		t.Fatalf("legacy review error = %v, want ErrRecordSchema", err)
 	}
 }
 
@@ -146,7 +137,7 @@ func TestReviewPRReportsLatestEventInterdiffWithoutPersisting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stored, version, _ := service.store.LoadPR2(pr.ID)
+	stored, version, _ := service.store.LoadPR(pr.ID)
 	stored.Events = []model.ReviewEvent{{ID: "01REVIEWBASISEVENT000000000", SourceHeadSHA: initial.Basis.SourceHeadSHA, BaseHeadSHA: initial.Basis.BaseHeadSHA, MergeBaseSHA: initial.Basis.MergeBaseSHA, Verdict: model.VerdictRejected, Timestamp: time.Now().UTC()}}
 	if _, err := service.store.SavePR2(stored, stored.State, version); err != nil {
 		t.Fatal(err)
@@ -155,14 +146,14 @@ func TestReviewPRReportsLatestEventInterdiffWithoutPersisting(t *testing.T) {
 	testGit(t, repoPath, "add", "later.txt")
 	testGit(t, repoPath, "commit", "-m", "later")
 	testGit(t, repoPath, "clean", "-fd")
-	_, metaBefore, _ := service.store.LoadPR2(pr.ID)
+	_, metaBefore, _ := service.store.LoadPR(pr.ID)
 	refsBefore := testGit(t, repoPath, "for-each-ref", "--format=%(refname) %(objectname)")
 	statusBefore := testGit(t, repoPath, "status", "--porcelain")
 	report, err := service.ReviewPR(context.Background(), pr.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, metaAfter, _ := service.store.LoadPR2(pr.ID)
+	_, metaAfter, _ := service.store.LoadPR(pr.ID)
 	refsAfter := testGit(t, repoPath, "for-each-ref", "--format=%(refname) %(objectname)")
 	statusAfter := testGit(t, repoPath, "status", "--porcelain")
 	if metaAfter != metaBefore || refsAfter != refsBefore || statusAfter != statusBefore {
@@ -170,27 +161,6 @@ func TestReviewPRReportsLatestEventInterdiffWithoutPersisting(t *testing.T) {
 	}
 	if report.LatestEvent == nil || report.LatestEvent.ID != stored.Events[0].ID || report.InterdiffStyle == "" || len(report.Interdiff) != 1 || report.Interdiff[0].Path != "later.txt" || report.Interdiff[0].Change != "added-to-diff" {
 		t.Fatalf("interdiff report = %#v", report)
-	}
-}
-
-func TestBranchBasedLegacyVerbsRefuseWithPendingSurfaces(t *testing.T) {
-	repoPath, service := newBranchService(t)
-	pr, _, _ := service.CreatePR(context.Background(), CreatePRRequest{Title: "Comments", Worktree: repoPath})
-	checks := []struct {
-		name string
-		call func() error
-		want string
-	}{
-		{name: "comments", call: func() error { _, _, err := service.LoadCommentsPR(pr.ID); return err }, want: "thread records"},
-		{name: "comment", call: func() error { _, err := service.AddComment(pr.ID, model.Comment{Comment: "not yet"}); return err }, want: "thread records"},
-		{name: "refresh", call: func() error { _, err := service.RefreshPR(context.Background(), pr.ID); return err }, want: "base containment"},
-		{name: "merge", call: func() error { _, _, err := service.MergePR(context.Background(), pr.ID, false); return err }, want: "MergeRecord"},
-	}
-	for _, check := range checks {
-		err := check.call()
-		if err == nil || !strings.Contains(err.Error(), "branch-based") || !strings.Contains(err.Error(), check.want) {
-			t.Errorf("%s refusal = %v, want branch-based and %q", check.name, err, check.want)
-		}
 	}
 }
 

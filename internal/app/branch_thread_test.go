@@ -211,7 +211,7 @@ func TestCommentAfterMergedStateCarriesPostClosureMarker(t *testing.T) {
 	if _, _, err := service.ApprovePR(context.Background(), pr.ID, heads); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := service.mergeBranchPR(context.Background(), pr.ID, false); err != nil {
+	if _, _, err := service.MergePR(context.Background(), pr.ID, false); err != nil {
 		t.Fatal(err)
 	}
 	commented, _, err := service.CommentPR2(context.Background(), pr.ID, ThreadCommentRequest{PRLevel: true, Text: "after merge"})
@@ -232,7 +232,7 @@ func TestReviewWithThreadsProjectsWithoutPersistence(t *testing.T) {
 	testGit(t, dir, "commit", "-m", "edit")
 	beforeRefs := testGit(t, dir, "for-each-ref", "--format=%(refname) %(objectname)")
 	beforeStatus := testGit(t, dir, "status", "--porcelain")
-	before, version, _ := service.store.LoadPR2(pr.ID)
+	before, version, _ := service.store.LoadPR(pr.ID)
 	report, err := service.ReviewPR(context.Background(), pr.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -240,7 +240,7 @@ func TestReviewWithThreadsProjectsWithoutPersistence(t *testing.T) {
 	if len(report.Threads) != 1 || !report.Threads[0].Outdated {
 		t.Fatalf("projected threads=%#v", report.Threads)
 	}
-	after, afterVersion, _ := service.store.LoadPR2(pr.ID)
+	after, afterVersion, _ := service.store.LoadPR(pr.ID)
 	if afterVersion != version || !reflect.DeepEqual(before, after) || testGit(t, dir, "for-each-ref", "--format=%(refname) %(objectname)") != beforeRefs || testGit(t, dir, "status", "--porcelain") != beforeStatus {
 		t.Fatal("review persisted projected thread state")
 	}
@@ -270,7 +270,7 @@ func TestConcurrentBranchCommentsAreRetriedExactlyOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, _, _ := serviceA.store.LoadPR2(pr.ID)
+	got, _, _ := serviceA.store.LoadPR(pr.ID)
 	if len(got.Threads) != 2 {
 		t.Fatalf("threads=%#v", got.Threads)
 	}
@@ -282,7 +282,7 @@ func TestConcurrentBranchCommentsAreRetriedExactlyOnce(t *testing.T) {
 
 func mustLatestEvent(t *testing.T, service *Service, id string) model.ReviewEvent {
 	t.Helper()
-	pr, _, err := service.store.LoadPR2(id)
+	pr, _, err := service.store.LoadPR(id)
 	if err != nil {
 		t.Fatal(err)
 	}

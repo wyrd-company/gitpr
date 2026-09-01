@@ -65,7 +65,7 @@ func (s *Service) CommentPR2(ctx context.Context, id string, req ThreadCommentRe
 		}
 	}
 	for attempt := 0; attempt < metadataMutationAttempts; attempt++ {
-		pr, version, err := s.store.LoadPR2(id)
+		pr, version, err := s.store.LoadPR(id)
 		if err != nil {
 			return model.PR2{}, "", err
 		}
@@ -145,7 +145,7 @@ func resolveCommentHeads(ctx context.Context, repo *gitutil.Repo, pr model.PR2, 
 
 func (s *Service) SetThreadStatus(id, threadID string, status model.ThreadStatus) (model.PR2, string, error) {
 	for attempt := 0; attempt < metadataMutationAttempts; attempt++ {
-		pr, version, err := s.store.LoadPR2(id)
+		pr, version, err := s.store.LoadPR(id)
 		if err != nil {
 			return model.PR2{}, "", err
 		}

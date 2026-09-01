@@ -2,49 +2,8 @@ package model
 
 import "time"
 
-type Status string
-
-const (
-	StatusOpen     Status = "open"
-	StatusApproved Status = "approved"
-	StatusRejected Status = "rejected"
-)
-
 type Config struct {
 	DefaultBranch string `yaml:"default_branch,omitempty"`
-}
-
-type PR struct {
-	ID                 string          `yaml:"id"`
-	Title              string          `yaml:"title"`
-	SourceBranch       string          `yaml:"source_branch"`
-	SourceWorktreePath string          `yaml:"source_worktree_path"`
-	RepositoryRoot     string          `yaml:"repository_root"`
-	BaseBranch         string          `yaml:"base_branch"`
-	SourceHeadSHA      string          `yaml:"source_head_sha"`
-	BaseHeadSHA        string          `yaml:"base_head_sha"`
-	MergeBaseSHA       string          `yaml:"merge_base_sha,omitempty"`
-	Description        string          `yaml:"description"`
-	FileDiffs          []FileDiff      `yaml:"file_diffs"`
-	Commits            []Commit        `yaml:"commits"`
-	Comments           []Comment       `yaml:"comments,omitempty"`
-	MergeConflicts     []MergeConflict `yaml:"merge_conflicts,omitempty"`
-	Status             Status          `yaml:"status"`
-	CreatedAt          time.Time       `yaml:"created_at"`
-	UpdatedAt          time.Time       `yaml:"updated_at"`
-	ClosedAt           *time.Time      `yaml:"closed_at,omitempty"`
-}
-
-func (PR) RecordSchema() int   { return 1 }
-func (pr PR) RecordID() string { return pr.ID }
-func (pr PR) RecordDisplayState() string {
-	return string(pr.Status)
-}
-
-type Record interface {
-	RecordSchema() int
-	RecordID() string
-	RecordDisplayState() string
 }
 
 type PRState string
@@ -148,12 +107,6 @@ type PR2 struct {
 	ClosedAt           *time.Time    `yaml:"closed_at,omitempty"`
 }
 
-func (PR2) RecordSchema() int   { return 2 }
-func (pr PR2) RecordID() string { return pr.ID }
-func (pr PR2) RecordDisplayState() string {
-	return string(pr.State)
-}
-
 type FileDiff struct {
 	OldPath string `yaml:"old_path,omitempty"`
 	NewPath string `yaml:"new_path,omitempty"`
@@ -176,23 +129,4 @@ type DiffLine struct {
 	OldLine int    `yaml:"old_line,omitempty"`
 	NewLine int    `yaml:"new_line,omitempty"`
 	Content string `yaml:"content"`
-}
-
-type Commit struct {
-	SHA     string `yaml:"sha"`
-	Message string `yaml:"message"`
-}
-
-type Comment struct {
-	FilePath  string    `yaml:"file_path"`
-	LineStart int       `yaml:"line_start"`
-	LineEnd   int       `yaml:"line_end"`
-	Comment   string    `yaml:"comment"`
-	CommitSHA string    `yaml:"commit_sha"`
-	CreatedAt time.Time `yaml:"created_at"`
-}
-
-type MergeConflict struct {
-	Path    string `yaml:"path,omitempty"`
-	Message string `yaml:"message"`
 }
