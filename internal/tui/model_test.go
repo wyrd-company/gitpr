@@ -1,18 +1,17 @@
 package tui
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/wyrd-company/gitpr/internal/model"
 )
 
-func TestListLoadedReportsSkippedBranchBasedRecords(t *testing.T) {
+func TestListLoadedKeepsBothRecordShapesWithoutSkippedMessage(t *testing.T) {
 	m := &Model{}
-	updated, _ := m.Update(listLoadedMsg{prs: []model.PR{{ID: "legacy"}}, skipped: 2})
+	updated, _ := m.Update(listLoadedMsg{records: []model.Record{model.PR{ID: "legacy"}, model.PR2{Schema: 2, ID: "branch"}}})
 	got := updated.(*Model)
-	if len(got.openPRs) != 1 || !strings.Contains(got.infoMessage, "2 branch-based") || !strings.Contains(got.infoMessage, "increment 8") {
-		t.Fatalf("TUI skipped-record state = prs %d, message %q", len(got.openPRs), got.infoMessage)
+	if len(got.openRecords) != 2 || got.infoMessage != "" {
+		t.Fatalf("TUI records = %d, message %q", len(got.openRecords), got.infoMessage)
 	}
 }
 
@@ -25,7 +24,7 @@ func TestPRLoadedResetsCommentCycle(t *testing.T) {
 		},
 	}
 
-	updated, _ := m.Update(prLoadedMsg{pr: model.PR{ID: "test"}})
+	updated, _ := m.Update(prLoadedMsg{record: model.PR{ID: "test"}})
 	got := updated.(*Model)
 
 	if got.editingCommentIndex != -1 {

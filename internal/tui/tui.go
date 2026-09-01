@@ -54,14 +54,13 @@ type diffRow struct {
 }
 
 type prLoadedMsg struct {
-	pr             model.PR
+	record         model.Record
 	highlightCache map[string]fileHighlight
 	err            error
 }
 
 type listLoadedMsg struct {
-	prs     []model.PR
-	skipped int
+	records []model.Record
 	err     error
 }
 
@@ -81,9 +80,10 @@ type Model struct {
 	width  int
 	height int
 
-	openPRs             []model.PR
+	openRecords         []model.Record
 	listCursor          int
 	currentPR           model.PR
+	currentPR2          *model.PR2
 	currentRows         []diffRow
 	highlightCache      map[string]fileHighlight
 	diffCursor          int
@@ -166,10 +166,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errMessage = msg.err.Error()
 			return m, nil
 		}
-		m.currentPR = msg.pr
-		m.highlightCache = msg.highlightCache
+		m.currentPR = model.PR{}
+		m.currentPR2 = nil
 		m.expandedComments = map[string]bool{}
-		m.rebuildRows()
+		switch record := msg.record.(type) {
+		case model.PR:
+			m.currentPR = record
+			m.highlightCache = msg.highlightCache
+			m.rebuildRows()
+		case model.PR2:
+			m.currentPR2 = &record
+			m.currentRows = nil
+		default:
+			m.errMessage = fmt.Sprintf("unsupported record type %T", msg.record)
+			return m, nil
+		}
 		m.screen = detailScreen
 		m.mode = modeBrowse
 		m.diffCursor = 0
@@ -186,17 +197,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errMessage = msg.err.Error()
 			return m, nil
 		}
-		m.openPRs = msg.prs
-		if m.listCursor >= len(m.openPRs) && len(m.openPRs) > 0 {
-			m.listCursor = len(m.openPRs) - 1
+		m.openRecords = msg.records
+		if m.listCursor >= len(m.openRecords) && len(m.openRecords) > 0 {
+			m.listCursor = len(m.openRecords) - 1
 		}
-		if len(m.openPRs) == 0 {
+		if len(m.openRecords) == 0 {
 			m.listCursor = 0
 		}
 		m.errMessage = ""
-		if msg.skipped > 0 {
-			m.infoMessage = fmt.Sprintf("%d branch-based PR(s) are available in CLI show/review; full TUI support arrives in increment 8", msg.skipped)
-		}
+		m.infoMessage = ""
 		return m, nil
 
 	case actionResultMsg:
@@ -274,20 +283,32 @@ func (m *Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.listCursor--
 		}
 	case "down", "j":
-		if m.listCursor < len(m.openPRs)-1 {
+		if m.listCursor < len(m.openRecords)-1 {
 			m.listCursor++
 		}
 	case "enter":
-		if len(m.openPRs) == 0 {
+		if len(m.openRecords) == 0 {
 			return m, nil
 		}
-		pr := m.openPRs[m.listCursor]
-		return m, m.loadPRCmd(pr.ID)
+		record := m.openRecords[m.listCursor]
+		return m, m.loadPRCmd(record.RecordID())
 	}
 	return m, nil
 }
 
 func (m *Model) handleDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.currentPR2 != nil {
+		switch msg.String() {
+		case "ctrl+c", "q":
+			return m, tea.Quit
+		case "esc":
+			m.screen, m.mode, m.errMessage = listScreen, modeBrowse, ""
+			return m, m.loadOpenPRsCmd()
+		case "c", "r", "m":
+			m.infoMessage = "Branch-based PR actions use the CLI: gitpr review <id>, approve/reject with its basis, gitpr merge <id>, or gitpr comment <id>."
+		}
+		return m, nil
+	}
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
@@ -466,15 +487,25 @@ func (m *Model) renderList() string {
 	lines = append(lines, titleStyle.Render("Open PRs"))
 	lines = append(lines, "")
 
-	if len(m.openPRs) == 0 {
+	if len(m.openRecords) == 0 {
 		lines = append(lines, mutedStyle.Render("No open PRs in refs/gitpr/index/open"))
 	} else {
-		for i, pr := range m.openPRs {
+		for i, record := range m.openRecords {
 			cursor := " "
 			if i == m.listCursor {
 				cursor = ">"
 			}
-			line := fmt.Sprintf("%s %s  %-18s %s", cursor, shortID(pr.ID), pr.SourceBranch, pr.Title)
+			var line string
+			switch pr := record.(type) {
+			case model.PR:
+				line = fmt.Sprintf("%s %s  %-18s %s", cursor, shortID(pr.ID), pr.SourceBranch, pr.Title)
+			case model.PR2:
+				state := pr.RecordDisplayState()
+				if pr.State == model.PRStateClosed && pr.Closure != nil {
+					state += " (" + string(pr.Closure.Reason) + ")"
+				}
+				line = fmt.Sprintf("%s %s  %-20s %-18s %s", cursor, shortID(pr.ID), state, pr.SourceBranch, pr.Title)
+			}
 			if i == m.listCursor {
 				line = cursorStyle.Render(line)
 			}
@@ -492,6 +523,9 @@ func (m *Model) renderList() string {
 }
 
 func (m *Model) renderDetail() string {
+	if m.currentPR2 != nil {
+		return m.renderBranchDetail()
+	}
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	conflictStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true)
@@ -556,27 +590,82 @@ func (m *Model) renderDetail() string {
 	return strings.Join(append(append(header, rows...), footer...), "\n")
 }
 
+func (m *Model) renderBranchDetail() string {
+	pr := m.currentPR2
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
+	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	lines := []string{
+		titleStyle.Render(fmt.Sprintf("PR %s: %s", shortID(pr.ID), pr.Title)),
+		fmt.Sprintf("Source: %s  Base: %s  State: %s", pr.SourceBranch, pr.BaseBranch, pr.State),
+	}
+	if len(pr.Events) > 0 {
+		latest := pr.Events[len(pr.Events)-1]
+		lines = append(lines, fmt.Sprintf("Latest event: %s  Verdict: %s", latest.ID, latest.Verdict), fmt.Sprintf("Reviewed pair: %s / %s", latest.SourceHeadSHA, latest.BaseHeadSHA))
+	} else {
+		lines = append(lines, "Latest event: none")
+	}
+	open, resolved, outdated := 0, 0, 0
+	for _, thread := range pr.Threads {
+		if thread.Status == model.ThreadResolved {
+			resolved++
+		} else {
+			open++
+		}
+		if thread.Outdated {
+			outdated++
+		}
+	}
+	lines = append(lines, fmt.Sprintf("Threads: %d open, %d resolved, %d outdated", open, resolved, outdated))
+	if pr.Closure != nil {
+		lines = append(lines, "Closure reason: "+string(pr.Closure.Reason))
+		if pr.Closure.DestinationBranch != "" {
+			lines = append(lines, "Destination: "+pr.Closure.DestinationBranch)
+		}
+		if len(pr.Closure.ResultingCommitSHAs) > 0 {
+			lines = append(lines, "Resulting commits: "+strings.Join(pr.Closure.ResultingCommitSHAs, ", "))
+		}
+		if len(pr.Closure.PatchEquivalentIdentities) > 0 {
+			lines = append(lines, "Patch identities: "+strings.Join(pr.Closure.PatchEquivalentIdentities, ", "))
+		}
+		if pr.Closure.ReplacingPRID != "" {
+			lines = append(lines, "Superseded by: "+pr.Closure.ReplacingPRID)
+		}
+		if pr.Closure.Note != "" {
+			lines = append(lines, "Closure note: "+pr.Closure.Note)
+		}
+	}
+	lines = append(lines, "", mutedStyle.Render("Read-only branch-based PR view. Keys: c/r/m show CLI guidance  esc back  q quit"))
+	if m.infoMessage != "" {
+		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Render(m.infoMessage))
+	}
+	if m.errMessage != "" {
+		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render(m.errMessage))
+	}
+	return strings.Join(lines, "\n")
+}
+
 func (m *Model) loadOpenPRsCmd() tea.Cmd {
 	return func() tea.Msg {
 		records, err := m.svc.OpenPRs()
 		if err != nil {
 			return listLoadedMsg{err: err}
 		}
-		prs := make([]model.PR, 0, len(records))
-		for _, record := range records {
-			if pr, ok := record.(model.PR); ok {
-				prs = append(prs, pr)
-			}
-		}
-		return listLoadedMsg{prs: prs, skipped: len(records) - len(prs)}
+		return listLoadedMsg{records: records}
 	}
 }
 
 func (m *Model) loadPRCmd(id string) tea.Cmd {
 	return func() tea.Msg {
-		pr, _, err := m.svc.LoadPR(id)
+		record, _, err := m.svc.LoadRecord(id)
 		if err != nil {
 			return prLoadedMsg{err: err}
+		}
+		if pr2, ok := record.(model.PR2); ok {
+			return prLoadedMsg{record: pr2}
+		}
+		pr, ok := record.(model.PR)
+		if !ok {
+			return prLoadedMsg{err: fmt.Errorf("unsupported record type %T", record)}
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -587,7 +676,7 @@ func (m *Model) loadPRCmd(id string) tea.Cmd {
 		}
 
 		cache := buildHighlightCache(ctx, pr)
-		return prLoadedMsg{pr: pr, highlightCache: cache}
+		return prLoadedMsg{record: pr, highlightCache: cache}
 	}
 }
 
