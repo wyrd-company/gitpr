@@ -59,9 +59,12 @@ func TestCreatePRRefusesDuplicateOpenPairButAllowsTerminalPredecessor(t *testing
 	if err != nil {
 		t.Fatalf("create after close: %v", err)
 	}
-	stored, version, _ = service.store.LoadPR2(second.ID)
-	stored.State = model.PRStateMerged
-	if _, err := service.store.SavePR2(stored, model.PRStateOpen, version); err != nil {
+	report, _ := service.ReviewPR(context.Background(), second.ID)
+	heads := ExpectedHeads{Source: report.Basis.SourceHeadSHA, Base: report.Basis.BaseHeadSHA}
+	if _, _, err := service.ApprovePR(context.Background(), second.ID, heads); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := service.mergeBranchPR(context.Background(), second.ID, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := service.CreatePR(context.Background(), CreatePRRequest{Title: "After merge", Worktree: repoPath}); err != nil {

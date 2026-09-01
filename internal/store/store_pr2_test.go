@@ -106,7 +106,10 @@ func TestListPRsFiltersKeepLegacyAndSchema2VocabulariesDistinct(t *testing.T) {
 	newStates := []model.PRState{model.PRStateOpen, model.PRStateMerged, model.PRStateClosed}
 	for i, state := range newStates {
 		pr := model.PR2{Schema: 2, ID: "01SCHEMA2FILTER00000000000" + string(rune('A'+i)), State: state}
-		if _, err := st.SavePR2(pr, "", ""); err != nil {
+		if state == model.PRStateMerged {
+			data, _ := yaml.Marshal(pr)
+			writeRawPRRecord(t, st, pr.ID, string(state), data)
+		} else if _, err := st.SavePR2(pr, "", ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -191,6 +194,50 @@ func TestSavePR2RejectsNonCanonicalObjectIDsOnInitialEvent(t *testing.T) {
 	if refsAfter != refsBefore {
 		t.Fatalf("invalid initial event mutated refs\nbefore: %s\nafter: %s", refsBefore, refsAfter)
 	}
+}
+
+func TestSavePR2RefusesMergedStateWithoutAtomicMergeOperation(t *testing.T) {
+	st, base, head := newStoreTestHistory(t)
+	pr := completePR2(st.repo.CommonRoot, base, head)
+	if _, err := st.SavePR2(pr, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	loaded, version, _ := st.LoadPR2(pr.ID)
+	refsBefore := storeTestGit(t, st.repo.CommonRoot, "for-each-ref", "--format=%(refname) %(objectname)")
+	loaded.State = model.PRStateMerged
+	if _, err := st.SavePR2(loaded, model.PRStateOpen, version); !errors.Is(err, ErrMergedStateRequiresMerge) {
+		t.Fatalf("merged SavePR2 error = %v", err)
+	}
+	refsAfter := storeTestGit(t, st.repo.CommonRoot, "for-each-ref", "--format=%(refname) %(objectname)")
+	if refsAfter != refsBefore {
+		t.Fatalf("forbidden merged save mutated refs\nbefore: %s\nafter: %s", refsBefore, refsAfter)
+	}
+}
+
+func TestMergePR2DerivesPreviousStateFromExpectedMetadata(t *testing.T) {
+	st, base, head := newStoreTestHistory(t)
+	storeTestGit(t, st.repo.CommonRoot, "update-ref", "refs/heads/main", base)
+	pr := completePR2(st.repo.CommonRoot, base, head)
+	if _, err := st.SavePR2(pr, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	closed, version, _ := st.LoadPR2(pr.ID)
+	closed.State = model.PRStateClosed
+	closed.Closure = &model.Closure{Reason: model.ClosureAbandoned}
+	if _, err := st.SavePR2(closed, model.PRStateOpen, version); err != nil {
+		t.Fatal(err)
+	}
+	merging, version, _ := st.LoadPR2(pr.ID)
+	merging.State = model.PRStateMerged
+	now := time.Now().UTC()
+	merging.MergedAt = &now
+	merging.MergedEventID = merging.Events[0].ID
+	if _, err := st.MergePR2(merging, version); err != nil {
+		t.Fatal(err)
+	}
+	assertMissingRef(t, st, st.indexRef2(model.PRStateClosed, pr.ID))
+	meta, _ := st.resolveRef(st.metaRef(pr.ID))
+	assertRef(t, st, st.indexRef2(model.PRStateMerged, pr.ID), meta)
 }
 
 func TestLoadPRDispatchesAbsentSchemaToLegacyAndSchema2ToPR2(t *testing.T) {
@@ -308,7 +355,8 @@ func TestSavePR2RejectsStaleWriterWithoutPartialRefsOrIndex(t *testing.T) {
 	if _, err := stB.SavePR2(winner, winner.State, winnerVersion); err != nil {
 		t.Fatal(err)
 	}
-	loser.State = model.PRStateMerged
+	loser.State = model.PRStateClosed
+	loser.Closure = &model.Closure{Reason: model.ClosureAbandoned}
 	loser.Events = completePR2(stA.repo.CommonRoot, base, head).Events
 	loser.Threads = []model.Thread{losingAnchorThread(base, head)}
 	if _, err := stA.SavePR2(loser, model.PRStateOpen, staleVersion); !errors.Is(err, ErrMetadataConflict) {
@@ -319,7 +367,7 @@ func TestSavePR2RejectsStaleWriterWithoutPartialRefsOrIndex(t *testing.T) {
 		t.Fatalf("winner metadata changed: %#v", loaded)
 	}
 	assertRef(t, stA, stA.indexRef2(model.PRStateOpen, pr.ID), winnerVersionFor(t, stA, pr.ID))
-	assertMissingRef(t, stA, stA.indexRef2(model.PRStateMerged, pr.ID))
+	assertMissingRef(t, stA, stA.indexRef2(model.PRStateClosed, pr.ID))
 	assertMissingRef(t, stA, eventRef(pr.ID, loser.Events[0].ID, "head"))
 	assertMissingRef(t, stA, anchorRef(pr.ID, loser.Threads[0].ID, "head"))
 	assertMissingRef(t, stA, anchorRef(pr.ID, loser.Threads[0].ID, "base"))

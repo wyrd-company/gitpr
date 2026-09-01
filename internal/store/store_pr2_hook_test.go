@@ -26,7 +26,8 @@ func TestSavePR2EventAppendIsAtomicOnInterleavedConflict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	loser.State = model.PRStateMerged
+	loser.State = model.PRStateClosed
+	loser.Closure = &model.Closure{Reason: model.ClosureAbandoned}
 	loser.Events = completePR2(losingStore.repo.CommonRoot, base, head).Events
 	loser.Threads = []model.Thread{losingAnchorThread(base, head)}
 
@@ -52,7 +53,7 @@ func TestSavePR2EventAppendIsAtomicOnInterleavedConflict(t *testing.T) {
 		t.Fatalf("metadata contains losing append: %#v", loaded)
 	}
 	assertRef(t, losingStore, losingStore.indexRef2(model.PRStateOpen, pr.ID), version)
-	assertMissingRef(t, losingStore, losingStore.indexRef2(model.PRStateMerged, pr.ID))
+	assertMissingRef(t, losingStore, losingStore.indexRef2(model.PRStateClosed, pr.ID))
 	assertMissingRef(t, losingStore, eventRef(pr.ID, loser.Events[0].ID, "head"))
 	assertMissingRef(t, losingStore, eventRef(pr.ID, loser.Events[0].ID, "base"))
 	assertMissingRef(t, losingStore, anchorRef(pr.ID, loser.Threads[0].ID, "head"))

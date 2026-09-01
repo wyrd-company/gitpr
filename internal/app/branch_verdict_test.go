@@ -199,13 +199,20 @@ func TestBranchVerdictsRefuseTerminalRecords(t *testing.T) {
 			pr, _, _ := service.CreatePR(context.Background(), CreatePRRequest{Title: "Terminal", Worktree: dir})
 			report, _ := service.ReviewPR(context.Background(), pr.ID)
 			heads := ExpectedHeads{Source: report.Basis.SourceHeadSHA, Base: report.Basis.BaseHeadSHA}
-			stored, version, _ := service.store.LoadPR2(pr.ID)
-			stored.State = state
-			if state == model.PRStateClosed {
+			if state == model.PRStateMerged {
+				if _, _, err := service.ApprovePR(context.Background(), pr.ID, heads); err != nil {
+					t.Fatal(err)
+				}
+				if _, _, err := service.mergeBranchPR(context.Background(), pr.ID, false); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				stored, version, _ := service.store.LoadPR2(pr.ID)
+				stored.State = state
 				stored.Closure = &model.Closure{Reason: model.ClosureAbandoned}
-			}
-			if _, err := service.store.SavePR2(stored, model.PRStateOpen, version); err != nil {
-				t.Fatal(err)
+				if _, err := service.store.SavePR2(stored, model.PRStateOpen, version); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if _, _, err := service.ApprovePR(context.Background(), pr.ID, heads); err == nil || !strings.Contains(err.Error(), "only while open") {
 				t.Errorf("approve terminal error = %v", err)

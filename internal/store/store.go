@@ -43,6 +43,7 @@ var ErrDuplicateEventID = errors.New("duplicate review event ID")
 var ErrInvalidEventObjectID = errors.New("review event has an invalid object ID")
 var ErrOpenPairConflict = errors.New("an open branch-based PR already tracks this branch pair")
 var ErrMergeConflict = errors.New("branch-based merge transaction conflicted")
+var ErrMergedStateRequiresMerge = errors.New("merged state requires the atomic branch merge operation")
 
 func New(root string) (*Store, error) {
 	repo, err := gitutil.Open(root)
@@ -180,9 +181,17 @@ func (s *Store) MergePR2(pr model.PR2, expectedMeta string) (string, error) {
 	if pr.State != model.PRStateMerged || len(pr.Events) == 0 {
 		return "", errors.New("merged schema-2 PR requires a review event")
 	}
+	data, err := s.showFileFromRef(expectedMeta, prFileName)
+	if err != nil {
+		return "", err
+	}
+	var previous model.PR2
+	if err := yaml.Unmarshal(data, &previous); err != nil {
+		return "", err
+	}
 	latest := pr.Events[len(pr.Events)-1]
 	baseUpdate := &refUpdate{Action: "update", Ref: "refs/heads/" + pr.BaseBranch, NewOID: latest.SourceHeadSHA, OldOID: latest.BaseHeadSHA}
-	return s.savePR2(pr, model.PRStateOpen, expectedMeta, baseUpdate)
+	return s.savePR2(pr, previous.State, expectedMeta, baseUpdate)
 }
 
 func (s *Store) savePR2(pr model.PR2, previousState model.PRState, expectedMeta string, baseUpdate *refUpdate) (string, error) {
@@ -191,6 +200,9 @@ func (s *Store) savePR2(pr model.PR2, previousState model.PRState, expectedMeta 
 	}
 	if pr.Schema != 2 {
 		return "", errors.New("schema-2 PR must have schema: 2")
+	}
+	if pr.State == model.PRStateMerged && baseUpdate == nil {
+		return "", fmt.Errorf("%w for PR %s", ErrMergedStateRequiresMerge, pr.ID)
 	}
 	if s.beforeSaveHook != nil {
 		s.beforeSaveHook()
