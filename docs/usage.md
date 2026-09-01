@@ -4,24 +4,63 @@ title: Usage
 order: 3
 ---
 
-A review moves through four steps: snapshot a branch, list what is open, review
-it in the TUI, and merge once it is approved.
+## Branch-based review flow
 
-1. Create a PR from your current worktree branch against the local default
-   branch. A `--title` is required.
-2. List open PRs to grab a ULID prefix.
-3. Review the change: launch the TUI for a side-by-side diff and inline
-   comments, or inspect it from the CLI with `show` and `comments`.
-4. Merge the approved work back into its base branch. Add `--cleanup` to also
-   remove the source worktree and branch.
+Create a PR for the current worktree branch, review its live basis, and use the
+exact reported pair for a verdict:
 
 ```bash
-gitpr create --title "Add diff viewer"
+gitpr create --title "Improve validation"
 gitpr list
-gitpr show <ulid-prefix>
-gitpr tui
-gitpr merge <ulid-prefix>
+gitpr review <pr-id>
+gitpr comment <pr-id> --file internal/example.go --line-start 20 \
+  --text "Handle the empty value here."
+gitpr approve <pr-id> --basis <source-head>:<base-head>
+gitpr merge <pr-id>
 ```
 
-The CLI accepts a full ULID or any unique prefix. Commands that take a PR ID but
-are given none — `show` and `comments` — open an interactive picker instead.
+Approve records an accepted event and does not merge. Merge reads the latest
+event and refuses rejected verdicts, head drift, deleted source branches,
+divergent histories, and equal source/base heads. Reject records a rejected
+event for the reviewed pair:
+
+```bash
+gitpr reject <pr-id> --basis <source-head>:<base-head>
+```
+
+Comments can be anchored, PR-level, or replies:
+
+```bash
+gitpr comment <pr-id> --pr-level --text "Ready for another review."
+gitpr comment <pr-id> --thread <thread-id> --text "Addressed."
+gitpr resolve <pr-id> <thread-id>
+gitpr reopen <pr-id> <thread-id>
+```
+
+Comments are allowed while a PR is open, merged, or closed. A post-closure
+comment is marked in the record.
+
+End work without merging through gitpr:
+
+```bash
+gitpr close <pr-id> --reason abandoned
+gitpr close <pr-id> --reason superseded --superseded-by <replacement-id>
+gitpr close <pr-id> --reason integrated --destination main \
+  --commit <landed-commit-sha>
+```
+
+Records remain retained after merge or closure. `gitpr delete <id>` previews the
+destructive operation; `--force` performs it and may make pinned commits
+collectable.
+
+The CLI accepts a full ULID or a unique prefix. `show` and `comments` open a
+picker without an ID. The TUI lists both formats and provides a read-only detail
+view for branch-based records; branch-based actions use the CLI review and basis
+flow.
+
+## Existing legacy records
+
+Prior-generation records are immutable snapshots without a `schema` field.
+Existing snapshots retain their `open`, `approved`, and `rejected` vocabulary
+and historical comment, refresh, reject, merge, cleanup, and TUI behavior. No
+command creates a legacy snapshot.
