@@ -220,7 +220,7 @@ func TestMergePRReportsSuccessfulMergeWhenConcurrentRejectWinsMetadata(t *testin
 		}
 	})
 
-	_, _, err := serviceA.MergePR(context.Background(), pr.ID, false)
+	merged, _, err := serviceA.MergePR(context.Background(), pr.ID, false)
 	if err == nil {
 		t.Fatal("MergePR() error = nil, want metadata repair error")
 	}
@@ -231,6 +231,9 @@ func TestMergePRReportsSuccessfulMergeWhenConcurrentRejectWinsMetadata(t *testin
 	}
 	if strings.Contains(err.Error(), "already closed") || strings.Contains(err.Error(), "merge failed") {
 		t.Fatalf("MergePR() error misstates merge outcome: %q", err)
+	}
+	if merged.ID == "" || merged.ID != pr.ID || merged.SourceHeadSHA != pr.SourceHeadSHA {
+		t.Fatalf("returned PR identity = %q at %q, want %q at merged SHA %q", merged.ID, merged.SourceHeadSHA, pr.ID, pr.SourceHeadSHA)
 	}
 	if got := testGit(t, repoPath, "rev-parse", "main"); got != pr.SourceHeadSHA {
 		t.Fatalf("main = %s, want merged SHA %s", got, pr.SourceHeadSHA)

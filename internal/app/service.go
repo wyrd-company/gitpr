@@ -302,9 +302,8 @@ func (s *Service) MergePR(ctx context.Context, id string, cleanup bool) (model.P
 		cleanupErr = repo.CleanupSourceWorktree(ctx, pr.SourceWorktreePath, pr.SourceBranch)
 	}
 
-	mergedID := pr.ID
-	mergedSHA := pr.SourceHeadSHA
-	pr, ref, err := s.mutatePRRef(pr.ID, func(current *model.PR) error {
+	mergedPR := pr
+	updatedPR, ref, err := s.mutatePRRef(pr.ID, func(current *model.PR) error {
 		if current.Status != model.StatusOpen {
 			return fmt.Errorf("PR %s is already closed", current.ID)
 		}
@@ -315,17 +314,17 @@ func (s *Service) MergePR(ctx context.Context, id string, cleanup bool) (model.P
 		return nil
 	})
 	if err != nil {
-		return pr, "", fmt.Errorf(
+		return mergedPR, "", fmt.Errorf(
 			"merge succeeded for PR %s at %s, but its metadata record needs repair; retry the command to record the merge",
-			mergedID,
-			mergedSHA,
+			mergedPR.ID,
+			mergedPR.SourceHeadSHA,
 		)
 	}
 	if cleanupErr != nil {
-		return pr, ref, fmt.Errorf("merged successfully, but cleanup failed: %w", cleanupErr)
+		return updatedPR, ref, fmt.Errorf("merged successfully, but cleanup failed: %w", cleanupErr)
 	}
 
-	return pr, ref, nil
+	return updatedPR, ref, nil
 }
 
 func (s *Service) mutatePR(id string, mutate func(*model.PR) error) (model.PR, error) {
