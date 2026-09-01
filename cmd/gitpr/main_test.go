@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/wyrd-company/gitpr/internal/model"
 	"github.com/wyrd-company/gitpr/internal/store"
 )
@@ -45,8 +43,12 @@ func TestListAndShowRenderMixedShapesWhileLegacyOutputStaysStable(t *testing.T) 
 		if err != nil {
 			t.Fatal(err)
 		}
-		head := cliGit(t, dir, "rev-parse", "HEAD")
-		legacy := model.PR{ID: "01LEGACYCLIGOLDEN000000000", Title: "Legacy record", SourceBranch: "feature", SourceHeadSHA: head, BaseHeadSHA: head, Status: model.StatusOpen}
+		hash := exec.Command("git", "-C", dir, "hash-object", "-w", "--stdin")
+		if _, err := hash.Output(); err != nil {
+			t.Fatal(err)
+		}
+		const objectID = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+		legacy := model.PR{ID: "01LEGACYCLIGOLDEN000000000", Title: "Legacy record", SourceBranch: "feature", BaseBranch: "main", SourceHeadSHA: objectID, BaseHeadSHA: objectID, Status: model.StatusOpen}
 		if _, err := st.SavePR(legacy, "", ""); err != nil {
 			t.Fatal(err)
 		}
@@ -54,15 +56,8 @@ func TestListAndShowRenderMixedShapesWhileLegacyOutputStaysStable(t *testing.T) 
 		if got := executeCLI(t, "list", "--status", "open"); got != legacyWant {
 			t.Fatalf("legacy list output changed\n got: %q\nwant: %q", got, legacyWant)
 		}
-		loadedLegacy, _, err := st.LoadLegacyPR(legacy.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		legacyYAML, err := yaml.Marshal(loadedLegacy)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := executeCLI(t, "show", legacy.ID); got != string(legacyYAML) {
+		const legacyYAML = "id: 01LEGACYCLIGOLDEN000000000\ntitle: Legacy record\nsource_branch: feature\nsource_worktree_path: \"\"\nrepository_root: \"\"\nbase_branch: main\nsource_head_sha: e69de29bb2d1d6434b8b29ae775ad8c2e48c5391\nbase_head_sha: e69de29bb2d1d6434b8b29ae775ad8c2e48c5391\ndescription: \"\"\nfile_diffs: []\ncommits: []\nstatus: open\ncreated_at: 0001-01-01T00:00:00Z\nupdated_at: 0001-01-01T00:00:00Z\n"
+		if got := executeCLI(t, "show", legacy.ID); got != legacyYAML {
 			t.Fatalf("legacy show output changed\n got: %q\nwant: %q", got, legacyYAML)
 		}
 
@@ -83,17 +78,51 @@ func TestListAndShowRenderMixedShapesWhileLegacyOutputStaysStable(t *testing.T) 
 	})
 }
 
+func TestMainRoutesCommandDataToStdout(t *testing.T) {
+	binary := t.TempDir() + "/gitpr"
+	build := exec.Command("go", "build", "-o", binary, ".")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build gitpr: %s: %v", output, err)
+	}
+	dir := newCLITestRepo(t)
+	cmd := exec.Command(binary, "list", "--status", "open")
+	cmd.Dir = dir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("gitpr list: %v, stderr=%q", err, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "No PRs found.") || stderr.Len() != 0 {
+		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+func TestApproveAliasIsUnavailableUntilVerdictCommandShips(t *testing.T) {
+	root := newRootCmd()
+	var stdout, stderr bytes.Buffer
+	root.SetOut(&stdout)
+	root.SetErr(&stderr)
+	root.SetArgs([]string{"approve", "anything"})
+	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "unknown command") {
+		t.Fatalf("gitpr approve error = %v, stdout=%q stderr=%q", err, stdout.String(), stderr.String())
+	}
+}
+
 func executeCLI(t *testing.T, args ...string) string {
 	t.Helper()
 	cmd := newRootCmd()
-	var output bytes.Buffer
-	cmd.SetOut(&output)
-	cmd.SetErr(&output)
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
 	cmd.SetArgs(args)
 	if err := cmd.Execute(); err != nil {
-		t.Fatalf("gitpr %s: %v\n%s", strings.Join(args, " "), err, output.String())
+		t.Fatalf("gitpr %s: %v\nstdout: %s\nstderr: %s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
-	return output.String()
+	if stderr.Len() != 0 {
+		t.Fatalf("gitpr %s wrote data to stderr: %q", strings.Join(args, " "), stderr.String())
+	}
+	return stdout.String()
 }
 
 func newCLITestRepo(t *testing.T) string {

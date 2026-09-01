@@ -29,6 +29,9 @@ func TestCreatePRWritesOpenSchema2BranchRecordWithoutSnapshotState(t *testing.T)
 		t.Fatalf("round trip = %#v, %v", loaded, err)
 	}
 	assertAppRefExists(t, repoPath, "refs/gitpr/index/open/"+pr.ID)
+	if got := testGit(t, repoPath, "for-each-ref", "--format=%(refname)", "refs/gitpr/openpair"); got == "" {
+		t.Fatal("create did not claim an open-pair ref")
+	}
 	if got, want := testGit(t, repoPath, "for-each-ref", "--format=%(refname)", "refs/gitpr/pr/"+pr.ID), "refs/gitpr/pr/"+pr.ID+"/meta"; got != want {
 		t.Fatalf("created PR refs = %q, want metadata only %q", got, want)
 	}
@@ -48,6 +51,9 @@ func TestCreatePRRefusesDuplicateOpenPairButAllowsTerminalPredecessor(t *testing
 	stored.Closure = &model.Closure{Reason: model.ClosureAbandoned}
 	if _, err := service.store.SavePR2(stored, model.PRStateOpen, version); err != nil {
 		t.Fatal(err)
+	}
+	if got := testGit(t, repoPath, "for-each-ref", "--format=%(refname)", "refs/gitpr/openpair"); got != "" {
+		t.Fatalf("closed transition retained open-pair ref: %s", got)
 	}
 	second, _, err := service.CreatePR(context.Background(), CreatePRRequest{Title: "After close", Worktree: repoPath})
 	if err != nil {
@@ -114,6 +120,15 @@ func TestReviewPRReflectsMovedAndDeletedSourceAndDivergedBase(t *testing.T) {
 		t.Fatalf("diverged basis = %#v, %v", report.Basis, err)
 	}
 
+	baseHead := testGit(t, repoPath, "rev-parse", "refs/heads/main")
+	testGit(t, repoPath, "checkout", "feature")
+	testGit(t, repoPath, "branch", "-D", "main")
+	report, err = service.ReviewPR(context.Background(), pr.ID)
+	if err != nil || !report.Basis.BaseBranchMissing || report.Basis.SourceBranchMissing || report.Basis.BaseHeadSHA != "" {
+		t.Fatalf("deleted-base basis = %#v, %v", report.Basis, err)
+	}
+	testGit(t, repoPath, "branch", "main", baseHead)
+	testGit(t, repoPath, "checkout", "main")
 	testGit(t, repoPath, "branch", "-D", "feature")
 	report, err = service.ReviewPR(context.Background(), pr.ID)
 	if err != nil || !report.Basis.SourceBranchMissing || report.Basis.SourceHeadSHA != "" || report.Basis.BaseHeadSHA == "" {
@@ -137,14 +152,16 @@ func TestReviewPRReportsLatestEventInterdiffWithoutPersisting(t *testing.T) {
 	testGit(t, repoPath, "add", "later.txt")
 	testGit(t, repoPath, "commit", "-m", "later")
 	_, metaBefore, _ := service.store.LoadPR2(pr.ID)
-	refsBefore := testGit(t, repoPath, "for-each-ref", "--format=%(refname) %(objectname)", "refs/gitpr")
+	refsBefore := testGit(t, repoPath, "for-each-ref", "--format=%(refname) %(objectname)")
+	statusBefore := testGit(t, repoPath, "status", "--porcelain")
 	report, err := service.ReviewPR(context.Background(), pr.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, metaAfter, _ := service.store.LoadPR2(pr.ID)
-	refsAfter := testGit(t, repoPath, "for-each-ref", "--format=%(refname) %(objectname)", "refs/gitpr")
-	if metaAfter != metaBefore || refsAfter != refsBefore {
+	refsAfter := testGit(t, repoPath, "for-each-ref", "--format=%(refname) %(objectname)")
+	statusAfter := testGit(t, repoPath, "status", "--porcelain")
+	if metaAfter != metaBefore || refsAfter != refsBefore || statusAfter != statusBefore {
 		t.Fatalf("review persisted state\nrefs before: %s\nrefs after: %s", refsBefore, refsAfter)
 	}
 	if report.LatestEvent == nil || report.LatestEvent.ID != stored.Events[0].ID || report.InterdiffStyle == "" || len(report.Interdiff) != 1 || report.Interdiff[0].Path != "later.txt" || report.Interdiff[0].Change != "added-to-diff" {
@@ -152,12 +169,37 @@ func TestReviewPRReportsLatestEventInterdiffWithoutPersisting(t *testing.T) {
 	}
 }
 
-func TestBranchBasedCommentsRefuseWithPendingSurface(t *testing.T) {
+func TestBranchBasedLegacyVerbsRefuseWithPendingSurfaces(t *testing.T) {
 	repoPath, service := newBranchService(t)
 	pr, _, _ := service.CreatePR(context.Background(), CreatePRRequest{Title: "Comments", Worktree: repoPath})
-	_, err := service.AddComment(pr.ID, model.Comment{Comment: "not yet"})
-	if err == nil || !strings.Contains(err.Error(), "branch-based") || !strings.Contains(err.Error(), "increment 7") {
-		t.Fatalf("comment refusal = %v", err)
+	checks := []struct {
+		name string
+		call func() error
+		want string
+	}{
+		{name: "comments", call: func() error { _, _, err := service.LoadCommentsPR(pr.ID); return err }, want: "increment 7"},
+		{name: "comment", call: func() error { _, err := service.AddComment(pr.ID, model.Comment{Comment: "not yet"}); return err }, want: "increment 7"},
+		{name: "refresh", call: func() error { _, err := service.RefreshPR(context.Background(), pr.ID); return err }, want: "base containment"},
+		{name: "reject", call: func() error { _, _, err := service.RejectPR(pr.ID); return err }, want: "increment 4"},
+		{name: "merge", call: func() error { _, _, err := service.MergePR(context.Background(), pr.ID, false); return err }, want: "merge increment"},
+	}
+	for _, check := range checks {
+		err := check.call()
+		if err == nil || !strings.Contains(err.Error(), "branch-based") || !strings.Contains(err.Error(), check.want) {
+			t.Errorf("%s refusal = %v, want branch-based and %q", check.name, err, check.want)
+		}
+	}
+}
+
+func TestCreatePRConfigFailureDoesNotPersistRecord(t *testing.T) {
+	repoPath, service := newBranchService(t)
+	tree := testGit(t, repoPath, "rev-parse", "HEAD^{tree}")
+	testGit(t, repoPath, "update-ref", "refs/gitpr/config/meta", tree)
+	if _, _, err := service.CreatePR(context.Background(), CreatePRRequest{Title: "Config failure", Worktree: repoPath}); err == nil {
+		t.Fatal("CreatePR() error = nil, want config write failure")
+	}
+	if got := testGit(t, repoPath, "for-each-ref", "--format=%(refname)", "refs/gitpr/pr"); got != "" {
+		t.Fatalf("config failure persisted PR refs: %s", got)
 	}
 }
 

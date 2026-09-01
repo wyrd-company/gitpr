@@ -293,6 +293,26 @@ func TestSavePR2RejectsStaleWriterWithoutPartialRefsOrIndex(t *testing.T) {
 	assertMissingRef(t, stA, anchorRef(pr.ID, loser.Threads[0].ID, "base"))
 }
 
+func TestDeletePR2ReleasesOpenPairOwnership(t *testing.T) {
+	st, base, head := newStoreTestHistory(t)
+	pr := completePR2(st.repo.CommonRoot, base, head)
+	pr.Events = nil
+	pr.Threads = nil
+	if _, err := st.SavePR2(pr, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	_, version, err := st.LoadPR2(pr.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRef(t, st, st.openPairRef(pr.SourceBranch, pr.BaseBranch), version)
+	if err := st.DeletePR2(pr, version); err != nil {
+		t.Fatal(err)
+	}
+	assertMissingRef(t, st, st.openPairRef(pr.SourceBranch, pr.BaseBranch))
+	assertMissingRef(t, st, st.metaRef(pr.ID))
+}
+
 func completePR2(root, base, head string) model.PR2 {
 	created := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 	updated := created.Add(time.Hour)
