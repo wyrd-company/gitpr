@@ -140,6 +140,31 @@ func TestLegacyCommentsOutputRemainsByteIdentical(t *testing.T) {
 	})
 }
 
+func TestCommandHelpUsesBranchBasedSemanticsWithoutApproveMergeAlias(t *testing.T) {
+	root := newRootCmd()
+	checks := map[string][]string{
+		"create":  {"branch-based PR", "worktree branch"},
+		"comment": {"legacy comment", "branch-based thread"},
+		"merge":   {"eligible PR", "base branch"},
+		"resolve": {"Resolve", "branch-based comment thread"},
+		"reopen":  {"Reopen", "branch-based comment thread"},
+	}
+	for name, wants := range checks {
+		cmd, _, err := root.Find([]string{name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range wants {
+			if !strings.Contains(cmd.Short, want) {
+				t.Errorf("%s Short=%q, missing %q", name, cmd.Short, want)
+			}
+		}
+		if name == "merge" && (strings.Contains(strings.ToLower(cmd.Short), "approv") || len(cmd.Aliases) != 0) {
+			t.Errorf("merge help implies approval: Short=%q aliases=%v", cmd.Short, cmd.Aliases)
+		}
+	}
+}
+
 func TestBranchBasedMergeCommandAdvancesBaseAndPrintsStdout(t *testing.T) {
 	dir := newCLITestRepo(t)
 	withinDir(t, dir, func() {

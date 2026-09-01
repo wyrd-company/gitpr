@@ -62,7 +62,7 @@ func newCreateCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "create",
-		Short: "Create a PR snapshot from a local worktree branch",
+		Short: "Create a branch-based PR from a local worktree branch",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			serviceRoot := "."
 			if strings.TrimSpace(worktree) != "" {
@@ -428,7 +428,7 @@ func newCommentCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "comment <pr-id>",
-		Short: "Add a review comment to an open PR (appends at the same anchor)",
+		Short: "Add a legacy comment or branch-based thread comment",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			svc, err := app.NewService(".")
@@ -539,7 +539,7 @@ func newCommentCmd() *cobra.Command {
 }
 
 func newThreadStatusCmd(verb string, status model.ThreadStatus) *cobra.Command {
-	return &cobra.Command{Use: verb + " <pr-id> <thread-id>", Short: verb + " a branch-based comment thread", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+	return &cobra.Command{Use: verb + " <pr-id> <thread-id>", Short: strings.ToUpper(verb[:1]) + verb[1:] + " a branch-based comment thread", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		svc, err := app.NewService(".")
 		if err != nil {
 			return err
@@ -605,7 +605,7 @@ func newRejectCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "reject <pr-id>",
 		Aliases: []string{"request-changes"},
-		Short:   "Close an open PR as rejected",
+		Short:   "Reject a legacy snapshot or record a rejected review event",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			svc, err := app.NewService(".")
@@ -636,7 +636,7 @@ func newMergeCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "merge <pr-id>",
-		Short: "Merge an open PR into its base branch and mark it approved",
+		Short: "Merge an eligible PR into its base branch",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			svc, err := app.NewService(".")

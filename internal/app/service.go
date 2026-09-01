@@ -244,7 +244,7 @@ func (s *Service) rejectLegacyPR(id string) (model.PR, string, error) {
 }
 
 func (s *Service) MergePR(ctx context.Context, id string, cleanup bool) (model.PR, string, error) {
-	if err := s.requireLegacySurface(id, "merge on branch-based PRs is not available yet; the merge increment adds this surface after verdicts"); err != nil {
+	if err := s.requireLegacySurface(id, "branch-based merges use the schema-dispatched MergeRecord surface"); err != nil {
 		return model.PR{}, "", err
 	}
 	pr, _, err := s.store.LoadLegacyPR(id)

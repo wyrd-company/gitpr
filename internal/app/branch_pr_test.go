@@ -184,7 +184,7 @@ func TestBranchBasedLegacyVerbsRefuseWithPendingSurfaces(t *testing.T) {
 		{name: "comments", call: func() error { _, _, err := service.LoadCommentsPR(pr.ID); return err }, want: "thread records"},
 		{name: "comment", call: func() error { _, err := service.AddComment(pr.ID, model.Comment{Comment: "not yet"}); return err }, want: "thread records"},
 		{name: "refresh", call: func() error { _, err := service.RefreshPR(context.Background(), pr.ID); return err }, want: "base containment"},
-		{name: "merge", call: func() error { _, _, err := service.MergePR(context.Background(), pr.ID, false); return err }, want: "merge increment"},
+		{name: "merge", call: func() error { _, _, err := service.MergePR(context.Background(), pr.ID, false); return err }, want: "MergeRecord"},
 	}
 	for _, check := range checks {
 		err := check.call()

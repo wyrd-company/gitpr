@@ -47,7 +47,7 @@ func (s *Service) ApprovePR(ctx context.Context, id string, heads ExpectedHeads)
 		return model.PR2{}, "", err
 	}
 	if _, legacy := record.(model.PR); legacy {
-		return model.PR2{}, "", errors.New("approve is available only for branch-based PRs; legacy PRs use merge to record their approved snapshot")
+		return model.PR2{}, "", errors.New("approve is available only for branch-based PRs; legacy snapshots retain their historical merge workflow")
 	}
 	if err := heads.Validate(); err != nil {
 		return model.PR2{}, "", err
