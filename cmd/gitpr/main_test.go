@@ -126,18 +126,21 @@ func TestMainRoutesCommandDataToStdout(t *testing.T) {
 }
 
 func TestVerdictCommandsRejectPartialOrConflictingBasisFlags(t *testing.T) {
-	for _, args := range [][]string{
-		{"approve", "anything", "--source-head", "one"},
-		{"reject", "anything", "--base-head", "two"},
-		{"approve", "anything", "--basis", "one:two", "--source-head", "one", "--base-head", "two"},
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"approve", "anything", "--source-head", "one"}, want: "both --source-head and --base-head"},
+		{args: []string{"reject", "anything", "--base-head", "two"}, want: "both --source-head and --base-head"},
+		{args: []string{"approve", "anything", "--basis", "one:two", "--source-head", "one", "--base-head", "two"}, want: "either --basis"},
 	} {
 		root := newRootCmd()
 		var stdout, stderr bytes.Buffer
 		root.SetOut(&stdout)
 		root.SetErr(&stderr)
-		root.SetArgs(args)
-		if err := root.Execute(); err == nil {
-			t.Fatalf("gitpr %v error = nil", args)
+		root.SetArgs(tc.args)
+		if err := root.Execute(); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("gitpr %v error = %v, want %q", tc.args, err, tc.want)
 		}
 	}
 }
