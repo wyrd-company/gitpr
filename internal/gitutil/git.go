@@ -79,12 +79,29 @@ func (r *Repo) HeadSHA(ctx context.Context, ref string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+func (r *Repo) CommitExists(ctx context.Context, oid string) bool {
+	_, err := runGit(ctx, r.WorktreePath, "cat-file", "-e", oid+"^{commit}")
+	return err == nil
+}
+
 func (r *Repo) MergeBase(ctx context.Context, leftRef, rightRef string) (string, error) {
 	out, err := runGit(ctx, r.WorktreePath, "merge-base", leftRef, rightRef)
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(out), nil
+}
+
+func (r *Repo) IsAncestor(ctx context.Context, ancestor, descendant string) (bool, error) {
+	_, err := runGit(ctx, r.WorktreePath, "merge-base", "--is-ancestor", ancestor, descendant)
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
 }
 
 func (r *Repo) FileContentAtRef(ctx context.Context, ref, path string) (string, error) {
@@ -296,6 +313,49 @@ func (r *Repo) worktreesForBranch(ctx context.Context, branch string) ([]string,
 	}
 
 	return worktrees, nil
+}
+
+func (r *Repo) PrepareBranchRefUpdate(ctx context.Context, branch string) (string, error) {
+	worktrees, err := r.worktreesForBranch(ctx, branch)
+	if err != nil {
+		return "", fmt.Errorf("find worktrees for %s: %w", branch, err)
+	}
+	if len(worktrees) > 1 {
+		return "", fmt.Errorf("base branch %s is checked out in multiple worktrees; detach it in all but one before merging", branch)
+	}
+	if len(worktrees) == 0 {
+		return "", nil
+	}
+	status, err := runGit(ctx, worktrees[0], "status", "--porcelain")
+	if err != nil {
+		return "", fmt.Errorf("inspect base worktree %s: %w", worktrees[0], err)
+	}
+	if strings.TrimSpace(status) != "" {
+		return "", fmt.Errorf("base branch %s worktree %s is dirty; commit or discard its changes before merging", branch, worktrees[0])
+	}
+	return worktrees[0], nil
+}
+
+func (r *Repo) RefreshWorktree(ctx context.Context, path, head string) error {
+	if _, err := runGit(ctx, path, "read-tree", "--reset", "-u", head); err != nil {
+		return fmt.Errorf("refresh worktree %s: %w", path, err)
+	}
+	return nil
+}
+
+func (r *Repo) WorktreeDirtyAgainst(ctx context.Context, path, expectedHead string) (bool, error) {
+	if _, err := runGit(ctx, path, "diff", "--quiet", expectedHead, "--"); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return true, nil
+		}
+		return false, err
+	}
+	untracked, err := runGit(ctx, path, "ls-files", "--others", "--exclude-standard")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(untracked) != "", nil
 }
 
 func (r *Repo) CleanupSourceWorktree(ctx context.Context, sourceWorktreePath, sourceBranch string) error {

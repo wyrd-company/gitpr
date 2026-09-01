@@ -19,27 +19,41 @@ import (
 var version = "dev"
 
 func main() {
+	rootCmd := newRootCmd()
+	rootCmd.SetOut(os.Stdout)
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func newRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
-		Use:     "gitpr",
-		Short:   "Review local git worktree branches as lightweight PRs",
-		Version: version,
+		Use:           "gitpr",
+		Short:         "Review local git worktree branches as lightweight PRs",
+		Version:       version,
+		SilenceUsage:  true,
+		SilenceErrors: true,
 	}
 
 	rootCmd.AddCommand(newCreateCmd())
 	rootCmd.AddCommand(newListCmd())
 	rootCmd.AddCommand(newShowCmd())
+	rootCmd.AddCommand(newReviewCmd())
+	rootCmd.AddCommand(newApproveCmd())
 	rootCmd.AddCommand(newCommentsCmd())
 	rootCmd.AddCommand(newCommentCmd())
+	rootCmd.AddCommand(newThreadStatusCmd("resolve", model.ThreadResolved))
+	rootCmd.AddCommand(newThreadStatusCmd("reopen", model.ThreadOpen))
 	rootCmd.AddCommand(newRefreshCmd())
 	rootCmd.AddCommand(newRejectCmd())
 	rootCmd.AddCommand(newMergeCmd())
+	rootCmd.AddCommand(newCloseCmd())
+	rootCmd.AddCommand(newDeleteCmd())
 	rootCmd.AddCommand(newDebugCmd())
 	rootCmd.AddCommand(newTUICmd())
 
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+	return rootCmd
 }
 
 func newCreateCmd() *cobra.Command {
@@ -50,7 +64,7 @@ func newCreateCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "create",
-		Short: "Create a PR snapshot from a local worktree branch",
+		Short: "Create a branch-based PR from a local worktree branch",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			serviceRoot := "."
 			if strings.TrimSpace(worktree) != "" {
@@ -74,7 +88,7 @@ func newCreateCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("Created PR %s at %s\n", pr.ID, ref)
+			cmd.Printf("Created PR %s at %s\n", pr.ID, ref)
 			return nil
 		},
 	}
@@ -89,7 +103,8 @@ func newCreateCmd() *cobra.Command {
 }
 
 func newListCmd() *cobra.Command {
-	var status string
+	var state, status, reason string
+	var all bool
 
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -100,25 +115,49 @@ func newListCmd() *cobra.Command {
 				return err
 			}
 
-			prs, err := svc.ListPRs(status)
+			if cmd.Flags().Changed("state") && cmd.Flags().Changed("status") {
+				return errors.New("use --state or --status, not both")
+			}
+			filter := state
+			if cmd.Flags().Changed("status") {
+				filter = status
+			}
+			if all {
+				if cmd.Flags().Changed("state") || cmd.Flags().Changed("status") || reason != "" {
+					return errors.New("--all cannot be combined with --state, --status, or --reason")
+				}
+				filter = "all"
+			}
+			if reason != "" && filter != "closed" {
+				flag := "--state"
+				if cmd.Flags().Changed("status") {
+					flag = "--status"
+				}
+				return fmt.Errorf("--reason can be combined only with %s closed", flag)
+			}
+			prs, err := svc.ListPRsWithReason(filter, model.ClosureReason(reason))
 			if err != nil {
 				return err
 			}
 
 			if len(prs) == 0 {
-				fmt.Println("No PRs found.")
+				cmd.Println("No PRs found.")
 				return nil
 			}
 
-			fmt.Printf("%-14s %-10s %-20s %s\n", "ID", "STATUS", "BRANCH", "TITLE")
+			cmd.Printf("%-14s %-10s %-20s %s\n", "ID", "STATUS", "BRANCH", "TITLE")
 			for _, pr := range prs {
-				fmt.Printf("%-14s %-10s %-20s %s\n", shortID(pr.ID), pr.Status, pr.SourceBranch, pr.Title)
+				branch, title, suffix := recordListFields(pr)
+				cmd.Printf("%-14s %-10s %-20s %s%s\n", shortID(pr.RecordID()), pr.RecordDisplayState(), branch, title, suffix)
 			}
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVar(&status, "status", "open", "Filter by status: open|approved|rejected|closed|all")
+	cmd.Flags().StringVar(&state, "state", "open", "Filter by state: open|approved|rejected|merged|closed")
+	cmd.Flags().StringVar(&status, "status", "", "Deprecated alias for --state")
+	cmd.Flags().StringVar(&reason, "reason", "", "Filter closed branch-based PRs by reason")
+	cmd.Flags().BoolVar(&all, "all", false, "Show records in every vocabulary and state")
 	return cmd
 }
 
@@ -157,23 +196,152 @@ func newShowCmd() *cobra.Command {
 				}
 			}
 
-			pr, _, err := svc.LoadPR(targetID)
+			pr, _, err := svc.LoadRecord(targetID)
 			if err != nil {
 				return err
 			}
 
-			out, err := yaml.Marshal(pr)
+			var shown any = pr
+			if branch, ok := pr.(model.PR2); ok {
+				type pr2YAML model.PR2
+				summary := struct {
+					Open     int `yaml:"open"`
+					Resolved int `yaml:"resolved"`
+					Outdated int `yaml:"outdated"`
+				}{}
+				for _, thread := range branch.Threads {
+					if thread.Status == model.ThreadResolved {
+						summary.Resolved++
+					} else {
+						summary.Open++
+					}
+					if thread.Outdated {
+						summary.Outdated++
+					}
+				}
+				shown = struct {
+					PR            pr2YAML `yaml:",inline"`
+					ThreadSummary any     `yaml:"thread_summary"`
+				}{pr2YAML(branch), summary}
+			}
+			out, err := yaml.Marshal(shown)
 			if err != nil {
 				return err
 			}
 
-			fmt.Print(string(out))
+			cmd.Print(string(out))
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVar(&status, "status", "all", "Filter by status when no PR ID is provided: open|approved|rejected|closed|all")
+	cmd.Flags().StringVar(&status, "status", "all", "Filter by status when no PR ID is provided: open|approved|rejected|merged|closed|all")
 	return cmd
+}
+
+func newReviewCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "review <pr-id>",
+		Short: "Compute the live review basis for a branch-based PR",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := app.NewService(".")
+			if err != nil {
+				return err
+			}
+			report, err := svc.ReviewPR(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			out, err := yaml.Marshal(report)
+			if err != nil {
+				return err
+			}
+			cmd.Print(string(out))
+			return nil
+		},
+	}
+	return cmd
+}
+
+type expectedHeadFlags struct {
+	source string
+	base   string
+	basis  string
+}
+
+func (f *expectedHeadFlags) bind(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&f.source, "source-head", "", "Expected source head from gitpr review")
+	cmd.Flags().StringVar(&f.base, "base-head", "", "Expected base head from gitpr review")
+	cmd.Flags().StringVar(&f.basis, "basis", "", "Expected review basis as <source>:<base>")
+}
+
+func (f expectedHeadFlags) parse() (*app.ExpectedHeads, error) {
+	source, base, basis := strings.TrimSpace(f.source), strings.TrimSpace(f.base), strings.TrimSpace(f.basis)
+	if basis == "" && source == "" && base == "" {
+		return nil, nil
+	}
+	if basis == "" && (source == "" || base == "") {
+		return nil, errors.New("both --source-head and --base-head are required; run gitpr review <id> before recording a verdict")
+	}
+	if basis != "" {
+		if source != "" || base != "" {
+			return nil, errors.New("use either --basis or --source-head with --base-head, not both")
+		}
+		parts := strings.Split(basis, ":")
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+			return nil, errors.New("--basis must be <source-head>:<base-head> from gitpr review")
+		}
+		source, base = strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+	}
+	heads := &app.ExpectedHeads{Source: source, Base: base}
+	if err := heads.Validate(); err != nil {
+		return nil, err
+	}
+	return heads, nil
+}
+
+func newApproveCmd() *cobra.Command {
+	var flags expectedHeadFlags
+	cmd := &cobra.Command{
+		Use:   "approve <pr-id>",
+		Short: "Record an accepted review event for a branch-based PR",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			heads, err := flags.parse()
+			if err != nil {
+				return err
+			}
+			if heads == nil {
+				heads = &app.ExpectedHeads{}
+			}
+			svc, err := app.NewService(".")
+			if err != nil {
+				return err
+			}
+			pr, ref, err := svc.ApprovePR(cmd.Context(), args[0], *heads)
+			if err != nil {
+				return err
+			}
+			cmd.Printf("Approved PR %s at %s\n", shortID(pr.ID), ref)
+			return nil
+		},
+	}
+	flags.bind(cmd)
+	return cmd
+}
+
+func recordListFields(record model.Record) (branch, title, suffix string) {
+	switch pr := record.(type) {
+	case model.PR:
+		return pr.SourceBranch, pr.Title, ""
+	case model.PR2:
+		if pr.State == model.PRStateClosed && pr.Closure != nil {
+			suffix = " (" + string(pr.Closure.Reason) + ")"
+		}
+		return pr.SourceBranch, pr.Title, suffix
+	default:
+		return "", "", ""
+	}
 }
 
 func newCommentsCmd() *cobra.Command {
@@ -211,21 +379,28 @@ func newCommentsCmd() *cobra.Command {
 				}
 			}
 
-			pr, _, err := svc.LoadPR(targetID)
+			record, _, err := svc.LoadRecord(targetID)
 			if err != nil {
 				return err
 			}
-
-			payload := struct {
-				ID       string          `yaml:"id"`
-				Title    string          `yaml:"title"`
-				Status   model.Status    `yaml:"status"`
-				Comments []model.Comment `yaml:"comments"`
-			}{
-				ID:       pr.ID,
-				Title:    pr.Title,
-				Status:   pr.Status,
-				Comments: pr.Comments,
+			var payload any
+			switch pr := record.(type) {
+			case model.PR:
+				payload = struct {
+					ID       string          `yaml:"id"`
+					Title    string          `yaml:"title"`
+					Status   model.Status    `yaml:"status"`
+					Comments []model.Comment `yaml:"comments"`
+				}{pr.ID, pr.Title, pr.Status, pr.Comments}
+			case model.PR2:
+				payload = struct {
+					ID      string         `yaml:"id"`
+					Title   string         `yaml:"title"`
+					State   model.PRState  `yaml:"state"`
+					Threads []model.Thread `yaml:"threads"`
+				}{pr.ID, pr.Title, pr.State, pr.Threads}
+			default:
+				return fmt.Errorf("unsupported record type %T", record)
 			}
 
 			out, err := yaml.Marshal(payload)
@@ -233,12 +408,12 @@ func newCommentsCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Print(string(out))
+			cmd.Print(string(out))
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVar(&status, "status", "all", "Filter by status when no PR ID is provided: open|approved|rejected|closed|all")
+	cmd.Flags().StringVar(&status, "status", "all", "Filter by status when no PR ID is provided: open|approved|rejected|merged|closed|all")
 	return cmd
 }
 
@@ -249,12 +424,61 @@ func newCommentCmd() *cobra.Command {
 	var text string
 	var commitSHA string
 	var updateIndex int
+	var prLevel bool
+	var threadID, side string
+	var headFlags expectedHeadFlags
 
 	cmd := &cobra.Command{
 		Use:   "comment <pr-id>",
-		Short: "Add a review comment to an open PR (appends at the same anchor)",
+		Short: "Add a legacy comment or branch-based thread comment",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := app.NewService(".")
+			if err != nil {
+				return err
+			}
+			record, _, err := svc.LoadRecord(args[0])
+			if err != nil {
+				return err
+			}
+			if _, branchBased := record.(model.PR2); branchBased {
+				if cmd.Flags().Changed("commit") || cmd.Flags().Changed("update") {
+					return errors.New("--commit and --update apply only to legacy comments; branch-based comments use --thread and review-basis flags")
+				}
+				if prLevel {
+					for _, name := range []string{"file", "line-start", "line-end", "side"} {
+						if cmd.Flags().Changed(name) {
+							return fmt.Errorf("--%s cannot be used with --pr-level", name)
+						}
+					}
+				}
+				heads, err := headFlags.parse()
+				if err != nil {
+					return err
+				}
+				var diffSide model.DiffSide
+				switch side {
+				case "", "new":
+					diffSide = model.DiffSideSource
+				case "old":
+					diffSide = model.DiffSideBase
+				default:
+					return errors.New("--side must be old or new")
+				}
+				pr, _, err := svc.CommentPR2(cmd.Context(), args[0], app.ThreadCommentRequest{ThreadID: threadID, PRLevel: prLevel, File: filePath, Side: diffSide, LineStart: lineStart, LineEnd: lineEnd, Text: text, Heads: heads})
+				if err != nil {
+					return err
+				}
+				createdID := threadID
+				if createdID == "" {
+					createdID = pr.Threads[len(pr.Threads)-1].ID
+				}
+				cmd.Printf("Saved comment in thread %s on PR %s\n", createdID, shortID(pr.ID))
+				return nil
+			}
+			if prLevel || threadID != "" || cmd.Flags().Changed("side") || cmd.Flags().Changed("source-head") || cmd.Flags().Changed("base-head") || cmd.Flags().Changed("basis") {
+				return errors.New("branch-based thread flags do not apply to legacy comments")
+			}
 			if strings.TrimSpace(filePath) == "" {
 				return errors.New("--file is required")
 			}
@@ -274,11 +498,6 @@ func newCommentCmd() *cobra.Command {
 				return errors.New("--update must be greater than or equal to 0")
 			}
 
-			svc, err := app.NewService(".")
-			if err != nil {
-				return err
-			}
-
 			comment := model.Comment{
 				FilePath:  strings.TrimSpace(filePath),
 				LineStart: lineStart,
@@ -293,7 +512,7 @@ func newCommentCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				fmt.Printf("Updated comment %d on PR %s: %s:%d-%d\n", updateIndex, shortID(pr.ID), comment.FilePath, comment.LineStart, comment.LineEnd)
+				cmd.Printf("Updated comment %d on PR %s: %s:%d-%d\n", updateIndex, shortID(pr.ID), comment.FilePath, comment.LineStart, comment.LineEnd)
 				return nil
 			}
 
@@ -302,7 +521,7 @@ func newCommentCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("Saved comment on PR %s: %s:%d-%d\n", shortID(pr.ID), comment.FilePath, comment.LineStart, comment.LineEnd)
+			cmd.Printf("Saved comment on PR %s: %s:%d-%d\n", shortID(pr.ID), comment.FilePath, comment.LineStart, comment.LineEnd)
 			return nil
 		},
 	}
@@ -313,8 +532,35 @@ func newCommentCmd() *cobra.Command {
 	cmd.Flags().StringVar(&text, "text", "", "Comment text")
 	cmd.Flags().StringVar(&commitSHA, "commit", "", "Optional commit SHA")
 	cmd.Flags().IntVar(&updateIndex, "update", -1, "Replace the comment at this index instead of appending")
+	cmd.Flags().BoolVar(&prLevel, "pr-level", false, "Create a PR-level thread")
+	cmd.Flags().StringVar(&threadID, "thread", "", "Reply in an existing thread")
+	cmd.Flags().StringVar(&side, "side", "new", "Anchored diff side: old|new")
+	headFlags.bind(cmd)
 
 	return cmd
+}
+
+func newThreadStatusCmd(verb string, status model.ThreadStatus) *cobra.Command {
+	return &cobra.Command{Use: verb + " <pr-id> <thread-id>", Short: strings.ToUpper(verb[:1]) + verb[1:] + " a branch-based comment thread", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+		svc, err := app.NewService(".")
+		if err != nil {
+			return err
+		}
+		record, _, err := svc.LoadRecord(args[0])
+		if err != nil {
+			return err
+		}
+		if _, legacy := record.(model.PR); legacy {
+			return fmt.Errorf("%s is available only for branch-based PR threads; legacy comments have no thread state", verb)
+		}
+		pr, _, err := svc.SetThreadStatus(args[0], args[1], status)
+		if err != nil {
+			return err
+		}
+		label := strings.ToUpper(verb[:1]) + verb[1:]
+		cmd.Printf("%s thread %s on PR %s\n", label, args[1], shortID(pr.ID))
+		return nil
+	}}
 }
 
 func newRefreshCmd() *cobra.Command {
@@ -328,30 +574,25 @@ func newRefreshCmd() *cobra.Command {
 				return err
 			}
 
-			pr, _, err := svc.LoadPR(args[0])
-			if err != nil {
-				return err
-			}
-
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 
-			pr, err = svc.RefreshConflicts(ctx, pr)
+			pr, err := svc.RefreshPR(ctx, args[0])
 			if err != nil {
 				return err
 			}
 
 			if len(pr.MergeConflicts) == 0 {
-				fmt.Printf("PR %s has no merge conflicts\n", shortID(pr.ID))
+				cmd.Printf("PR %s has no merge conflicts\n", shortID(pr.ID))
 				return nil
 			}
 
-			fmt.Printf("PR %s has %d merge conflict(s):\n", shortID(pr.ID), len(pr.MergeConflicts))
+			cmd.Printf("PR %s has %d merge conflict(s):\n", shortID(pr.ID), len(pr.MergeConflicts))
 			for _, conflict := range pr.MergeConflicts {
 				if strings.TrimSpace(conflict.Path) != "" {
-					fmt.Printf("- %s: %s\n", conflict.Path, conflict.Message)
+					cmd.Printf("- %s: %s\n", conflict.Path, conflict.Message)
 				} else {
-					fmt.Printf("- %s\n", conflict.Message)
+					cmd.Printf("- %s\n", conflict.Message)
 				}
 			}
 			return nil
@@ -362,10 +603,11 @@ func newRefreshCmd() *cobra.Command {
 }
 
 func newRejectCmd() *cobra.Command {
+	var flags expectedHeadFlags
 	cmd := &cobra.Command{
 		Use:     "reject <pr-id>",
 		Aliases: []string{"request-changes"},
-		Short:   "Close an open PR as rejected",
+		Short:   "Reject a legacy snapshot or record a rejected review event",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			svc, err := app.NewService(".")
@@ -373,15 +615,20 @@ func newRejectCmd() *cobra.Command {
 				return err
 			}
 
-			pr, ref, err := svc.RejectPR(args[0])
+			heads, err := flags.parse()
+			if err != nil {
+				return err
+			}
+			record, ref, err := svc.RejectRecord(cmd.Context(), args[0], heads)
 			if err != nil {
 				return err
 			}
 
-			fmt.Printf("Rejected PR %s at %s\n", shortID(pr.ID), ref)
+			cmd.Printf("Rejected PR %s at %s\n", shortID(record.RecordID()), ref)
 			return nil
 		},
 	}
+	flags.bind(cmd)
 
 	return cmd
 }
@@ -390,10 +637,9 @@ func newMergeCmd() *cobra.Command {
 	var cleanup bool
 
 	cmd := &cobra.Command{
-		Use:     "merge <pr-id>",
-		Aliases: []string{"approve"},
-		Short:   "Merge an open PR into its base branch and mark it approved",
-		Args:    cobra.ExactArgs(1),
+		Use:   "merge <pr-id>",
+		Short: "Merge an eligible PR into its base branch",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			svc, err := app.NewService(".")
 			if err != nil {
@@ -403,18 +649,21 @@ func newMergeCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 60*time.Second)
 			defer cancel()
 
-			pr, ref, err := svc.MergePR(ctx, args[0], cleanup)
+			record, ref, err := svc.MergeRecord(ctx, args[0], cleanup)
 			if err != nil {
-				if pr.ID != "" && ref != "" {
-					printMergeSuccess(pr, ref, cleanup)
-					fmt.Fprintf(os.Stderr, "Cleanup failed after merge: %v\n", err)
-					return nil
+				if record != nil && ref != "" {
+					if printErr := printMergeRecordSuccess(cmd, record, ref, cleanup); printErr != nil {
+						return printErr
+					}
+					if _, legacy := record.(model.PR); legacy {
+						cmd.PrintErrf("Cleanup failed after merge: %v\n", err)
+						return nil
+					}
 				}
 				return err
 			}
 
-			printMergeSuccess(pr, ref, cleanup)
-			return nil
+			return printMergeRecordSuccess(cmd, record, ref, cleanup)
 		},
 	}
 
@@ -422,11 +671,78 @@ func newMergeCmd() *cobra.Command {
 	return cmd
 }
 
-func printMergeSuccess(pr model.PR, ref string, cleanup bool) {
-	fmt.Printf("Merged PR %s into %s at %s\n", shortID(pr.ID), pr.BaseBranch, ref)
-	if !cleanup {
-		fmt.Println("Source worktree kept.")
+func printMergeRecordSuccess(cmd *cobra.Command, record model.Record, ref string, cleanup bool) error {
+	if pr, legacy := record.(model.PR); legacy {
+		printMergeSuccess(cmd, pr, ref, cleanup)
+		return nil
 	}
+	pr, ok := record.(model.PR2)
+	if !ok {
+		return fmt.Errorf("cannot render merge result for record type %T", record)
+	}
+	cmd.Printf("Merged PR %s into %s at %s\n", shortID(pr.ID), pr.BaseBranch, ref)
+	if !cleanup {
+		cmd.Println("Source worktree kept.")
+	}
+	return nil
+}
+
+func printMergeSuccess(cmd *cobra.Command, pr model.PR, ref string, cleanup bool) {
+	cmd.Printf("Merged PR %s into %s at %s\n", shortID(pr.ID), pr.BaseBranch, ref)
+	if !cleanup {
+		cmd.Println("Source worktree kept.")
+	}
+}
+
+func newCloseCmd() *cobra.Command {
+	var reason, destination, supersededBy, note string
+	var commits, patchIDs []string
+	cmd := &cobra.Command{Use: "close <pr-id>", Short: "Close an open branch-based PR", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		svc, err := app.NewService(".")
+		if err != nil {
+			return err
+		}
+		pr, ref, err := svc.ClosePR(args[0], app.ClosePRRequest{Reason: model.ClosureReason(reason), Destination: destination, Commits: commits, PatchIDs: patchIDs, SupersededBy: supersededBy, Note: note})
+		if err != nil {
+			return err
+		}
+		cmd.Printf("Closed PR %s as %s at %s\n", shortID(pr.ID), pr.Closure.Reason, ref)
+		return nil
+	}}
+	cmd.Flags().StringVar(&reason, "reason", "", "Closure reason: integrated|superseded|abandoned")
+	cmd.Flags().StringVar(&destination, "destination", "", "Destination branch for integrated closure")
+	cmd.Flags().StringSliceVar(&commits, "commit", nil, "Resulting commit SHA for integrated closure (repeatable)")
+	cmd.Flags().StringSliceVar(&patchIDs, "patch-id", nil, "Patch-equivalent identity for integrated closure (repeatable)")
+	cmd.Flags().StringVar(&supersededBy, "superseded-by", "", "Replacement branch-based PR ID")
+	cmd.Flags().StringVar(&note, "note", "", "Optional closure note")
+	_ = cmd.MarkFlagRequired("reason")
+	return cmd
+}
+
+func newDeleteCmd() *cobra.Command {
+	var force bool
+	cmd := &cobra.Command{Use: "delete <pr-id>", Short: "Delete a PR record and all retained refs", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		svc, err := app.NewService(".")
+		if err != nil {
+			return err
+		}
+		if !force {
+			summary, err := svc.DeleteRecordSummary(args[0])
+			if err != nil {
+				return err
+			}
+			cmd.Printf("Would delete PR %s (state: %s, events: %d, threads: %d).\n", summary.ID, summary.State, summary.EventCount, summary.ThreadCount)
+			cmd.Println("Warning: pinned review commits may become collectable. Re-run with --force to delete.")
+			return errors.New("refusing to delete without --force")
+		}
+		if err := svc.DeleteRecord(args[0]); err != nil {
+			return err
+		}
+		cmd.Printf("Deleted PR %s\n", shortID(args[0]))
+		return nil
+	}}
+	cmd.Flags().BoolVar(&force, "force", false, "Permanently delete the record and retained refs")
+	return cmd
 }
 
 func newDebugCmd() *cobra.Command {
@@ -456,7 +772,7 @@ func newDebugCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("Exported %s for PR %s to %s\n", firstNonEmpty(which, "meta"), args[0], targetDir)
+			cmd.Printf("Exported %s for PR %s to %s\n", firstNonEmpty(which, "meta"), args[0], targetDir)
 			return nil
 		},
 	}

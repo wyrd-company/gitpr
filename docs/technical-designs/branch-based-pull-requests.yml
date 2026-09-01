@@ -1,0 +1,316 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  contextualized-by:
+    - adopt-branch-based-pull-requests
+objective: >-
+  Reshape the gitpr pull request from a single immutable snapshot into a
+  branch-scoped record that survives normal branch movement, while preserving
+  the property that every verdict is an immutable judgment on an exact pair of
+  commits. The PR follows its source branch; reviews are append-only events
+  inside it; approval and merge are separate operations; the PR ends in a
+  truthful final state.
+
+background:
+  current-design: >-
+    A PR freezes its identity at creation: base branch, source head SHA, base
+    head SHA, and merge base SHA are captured once, the diff and comments are
+    anchored to that capture, and the status set is open, approved, or
+    rejected. Merge fast-forwards the base branch to the recorded source head.
+    Storage is ref-backed: refs/gitpr/pr/<id>/{meta,head,base} hold the
+    metadata commit and pin the snapshot commits against garbage collection,
+    and refs/gitpr/index/<status>/<id> provides status listing.
+  problems:
+    - A rebase of the source branch strands the snapshot record behind a
+      misleading divergence diagnostic; the record cannot follow the branch,
+      so the review restarts from a new PR and the old one lingers.
+    - Work that integrates by rebase, cherry-pick, or a later snapshot has no
+      honest closure; the record must stay open or carry a false rejected
+      verdict, and the open list stops working as a review queue.
+    - The conversation dies with the verdict; review responses cannot attach
+      to the closed snapshot that contains the finding.
+    - Approval and merge are one operation, so a verdict cannot be recorded
+      without writing the base branch; verification-only reviews and reviews
+      performed under an external base-ref lease cannot record their outcome.
+    - Approval does not gate on branch movement; nothing distinguishes the
+      reviewed commits from whatever the branches point at when merge runs.
+
+design-challenges:
+  verdict-integrity: >-
+    A verdict must remain a judgment on an exact pair of commits at a point in
+    time, and merge must never ship commits nobody reviewed, even though the
+    PR now tolerates branch movement.
+  base-write-safety: >-
+    Recording an approval must not mutate the base branch or create working
+    trees. An external process may hold a lease on the base ref while a review
+    concludes; merge must fail that race atomically instead of colliding with
+    the lease or falling back to a temporary worktree.
+  durable-conversation: >-
+    Comment threads must survive successive review rounds and rebases, mark
+    themselves outdated when their anchor no longer maps, and accept
+    late comments after closure without changing any verdict.
+  layered-compatibility: >-
+    Existing snapshot records must remain readable and operable without
+    migration or reinterpretation, while new records use the new model in the
+    same storage namespace.
+
+proposed-design:
+  high-level-overview: >-
+    A PR binds a source branch to a base branch and stays open while the work
+    is in flight. A verdict creates a review event: an immutable, append-only
+    record of the exact source head, base head, and merge base it judged,
+    carrying exactly one of two verdicts, accepted or rejected. Approval
+    writes its event and nothing else. Merge is a separate operation that
+    succeeds only when both live branch heads still equal an accepted event's
+    recorded heads and the recorded integration is a fast-forward, enforced
+    as an atomic compare-and-swap on the base ref. Comment threads belong to
+    the PR, re-anchor across events, and are explicitly resolvable. The PR
+    ends as merged, or closed with a machine-readable reason.
+
+  storage-model: >-
+    Metadata authority stays at refs/gitpr/pr/<id>/meta. A new record carries
+    schema: 2 in its metadata; a record without the field is a legacy snapshot
+    and is read through the existing code path unchanged. A review event is a
+    fixed-size header in the metadata document — event id, source_head_sha,
+    base_head_sha, merge_base_sha, verdict, timestamp, predecessor event id —
+    pinned by per-event refs refs/gitpr/pr/<id>/events/<event-id>/{head,base}
+    so every judged commit stays reachable against garbage collection. A
+    comment thread's recorded head pair is pinned the same way: writing a
+    thread against a pair no event has recorded creates anchor refs
+    refs/gitpr/pr/<id>/anchors/<thread-id>/{head,base}. Anchor refs are
+    released when an event records the same pair, and otherwise live as
+    long as the record does — delete removes them with everything else —
+    so a thread's trees stay reachable whether or not its basis is ever
+    judged. A thread is stored in the metadata document as: thread id,
+    kind (anchored or PR-level), status (open or resolved), the outdated
+    flag, and for anchored threads the recorded source and base head pair
+    with the file, side, and line range; each comment in the thread
+    carries its body, timestamp, the head pair it was written against,
+    and its post-closure marker when written after closure. An
+    event's diff is not stored: it is recomputed on demand from the two
+    pinned commits, so the metadata document stays bounded by event count,
+    not diff size. New-model status indexes are
+    refs/gitpr/index/<state>/<id> with state segments open, merged, and
+    closed; the closure reason lives in the metadata, and reason-scoped
+    listing loads the closed records' metadata (bounded by the closed count
+    at gitpr's scale). Legacy segments open, approved, and rejected remain
+    untouched. All metadata writes go through the concurrency-safe
+    compare-and-swap store primitive specified by kanban 574, which is a
+    prerequisite of this design's implementation.
+
+  status-vocabulary: >-
+    Review events terminate in exactly two states: accepted or rejected. The
+    PR lifecycle is open to merged, or open to closed with a reason. Closure
+    reasons are integrated (the content landed by other means — rebase,
+    cherry-pick, manual merge, or verification of an already-integrated
+    head), superseded (a named replacement PR carries the work forward), and
+    abandoned. A closure records structured evidence: for integrated, the
+    destination branch plus the resulting commit SHAs or their
+    patch-equivalent identities, so the record answers where the work landed
+    without reading a comment; for superseded, the replacing PR id; for any
+    reason, an optional free-text note. A verification-only review closes as
+    integrated; its accepted event carries the approval, and the closure
+    evidence preserves the exact repository identities the gate judged, so
+    the record is neither stuck open nor falsely rejected.
+
+  review-events: >-
+    An event is created only by a verdict: approve and reject each atomically
+    append one event carrying its verdict, the exact source_head_sha,
+    base_head_sha, and merge_base_sha judged, and its timestamp. No event
+    exists without a verdict, and no event is ever edited or deleted; a new
+    judgment is a new event. Each event after the first records its
+    predecessor — the immediately preceding event on the PR — which records
+    judgment lineage: it orders the events and attributes each round to the
+    judgment it answers; the first event has none. The review surface
+    computes and offers the interdiff between the diff of the current basis
+    — the live head pair under review — and the recomputed diff of the
+    latest event, when an event exists, so a reviewer can scope re-review
+    after a rebase or a remediation round to what changed since the last
+    judgment; whether to rely on the interdiff or re-review in full remains
+    the reviewer's choice. An
+    event whose diff is empty is legal; it records a judgment on an
+    already-integrated or unchanged tree.
+
+  staleness-and-merge-gating: >-
+    Merge consults the latest event on the PR. It is permitted only when that
+    event is accepted, its recorded source_head_sha equals the live source
+    branch head, its recorded base_head_sha equals the live base branch head,
+    and its recorded base head is a strict ancestor of its recorded source
+    head — the fast-forward requirement, verifiable from the pinned event
+    commits alone, which also excludes rewinds, divergence, and no-op merges,
+    and makes merge-time conflicts impossible. A rejected latest event blocks
+    merge even when an older accepted event matches the live heads; the
+    recovery is a new accepted event, not an override. Movement on either
+    side, and a source branch that no longer exists, fail the gate with
+    side-specific diagnostics: each refusal names the recorded and the live
+    identity for the side that failed (for a deleted branch, the recorded
+    head and the fact of deletion), so source drift and base drift cannot
+    mask each other. The write itself is git update-ref on the base with the
+    expected old value set to the event's recorded base head, so a base that
+    moves between check and write fails the swap atomically. Merge never
+    creates a worktree. When the base branch is checked out in more than one
+    worktree, merge refuses. When it is checked out in exactly one, merge
+    refuses if that worktree is dirty; when it is clean, merge performs the
+    ref swap and then explicitly refreshes that worktree's index and working
+    tree to the new head, so no worktree is left reporting phantom
+    modifications. The ref swap is the merge: if the follow-up refresh
+    fails, the merge is already complete and correct, and the command exits
+    non-zero with a diagnostic that states the merge succeeded and names the
+    worktree and the command that repairs it — the shape the current
+    merged-but-cleanup-failed path already uses.
+    Divergence between the live branches is surfaced before
+    the verdict, not at merge: the review surface reports whether the live
+    base head is contained in the live source head, which replaces the
+    current model's stored merge_conflicts metadata and its refresh verb.
+
+  approval-operation: >-
+    Approve and reject take the reviewed head pair from the review output as
+    their expected heads. The expected pair is mandatory: a verdict invoked
+    without one is refused — there is no live-heads fallback, because a
+    fallback would certify whatever the branches point at unseen. Approve
+    additionally resolves the live heads at event creation and refuses when
+    either differs from the expected pair, naming the expected and the live
+    identity; only on a match does it atomically record the event for
+    exactly that pair. An approval therefore cannot certify commits the
+    reviewer did not read: movement between reviewing and judging fails the
+    approval the same way movement between judging and merging fails the
+    merge. A branch that moves between the live-head check and the event
+    append does not invalidate the event: the event truthfully records the
+    pair that was judged, and the merge gate's own live-head comparison keeps
+    any unreviewed movement unmergeable. Reject does not check live-head
+    drift: it records the rejected event for the expected pair as read. A
+    rejection certifies nothing
+    mergeable, so drift cannot launder unreviewed commits through it, and
+    refusing a valid rejection because the author pushed mid-review would
+    re-strand the review — the failure this design exists to remove.
+    Beyond its event refs, a verdict performs no repository mutation: no
+    base write, no worktree creation, no cleanup. Approve and merge are
+    distinct verbs with distinct effects; no alias joins them.
+
+  comment-lifecycle: >-
+    A comment thread belongs to the PR. A thread is either anchored — to a
+    file, side, and line range in the diff of the head pair it was written
+    against, with that source-head and base-head pair recorded on the thread
+    — or PR-level, attached to the PR with no anchor, for dispositions and
+    discussion that concern the change as a whole. Anchoring binds to the
+    head pair, not to an event, because the ordinary flow writes findings
+    while no event exists yet: the reviewer reads the review basis, posts
+    comments against it, and only then issues the verdict that creates the
+    event. An event association is derived by pair matching — a thread
+    belongs with the latest event that recorded the same pair, when any
+    exists. A thread's recorded pair is pinned by anchor refs until an
+    event records the same pair (storage model above); if a pinned tree is
+    nevertheless missing — a record predating this rule, or refs removed by
+    hand — the thread degrades to outdated with its text and recorded
+    identities intact. Anchored threads re-map through the diff between the
+    thread's recorded trees and the newest reviewed trees. The persisted
+    re-map happens when state is written anyway, with a bounded target: a
+    verdict re-maps every thread to the event's recorded pair; a comment
+    write re-maps only the thread being written, to the pair the comment
+    is written against. The review surface merely computes and displays
+    the projected marking for the basis it is rendering, persisting
+    nothing. A range that no
+    longer maps, or whose content changed, marks the thread outdated: kept,
+    displayed, flagged, never blocking — head equality already gates merge,
+    so outdated marking is informational. PR-level threads never outdate.
+    Threads are explicitly resolvable and reopenable. Commenting is legal in
+    every PR state, including merged and closed; a comment written after
+    closure carries an explicit post-closure marker in its record — not
+    merely a timestamp — and anchors either at PR level or to the event it
+    references (by default the final event), so the record shows on its face
+    that every verdict predates it.
+
+  command-surface: >-
+    Verbs that take a PR id load the record and dispatch on its schema; a
+    verb with no meaning for the record's shape refuses with an error naming
+    the distinction. create takes no id and always creates a new-model,
+    branch-scoped PR without freezing a snapshot; no verb creates a legacy
+    record. The new-model-only id verbs — approve (verdict, creating the
+    event atomically), close (ends the PR with a required reason and
+    evidence), resolve and reopen (thread state) — refuse legacy ids.
+    review is a pure read: it computes the review basis — heads, merge
+    base, diff, base-containment — and the interdiff against the latest
+    event, and persists nothing. The shared, schema-dispatched verbs —
+    show, list, comments, comment, delete, merge, and reject — operate on
+    both shapes: on a legacy id, merge and reject keep their existing
+    snapshot behavior; on a new-model id, merge is the gated
+    compare-and-swap integration and reject records a rejected event.
+    refresh is legacy-only and keeps its existing behavior; it has no
+    new-model counterpart because base containment is computed by review,
+    not stored. list renders both shapes: legacy records list under their
+    own vocabulary (open, approved, rejected) and new records under theirs
+    (open, merged, closed with reason); state filters accept both
+    vocabularies and never conflate them — a merged filter does not include
+    legacy approved.
+
+  retention: >-
+    Nothing drops from storage at closure. list defaults to open PRs so the
+    queue signal stays clean; merged and closed records remain listable
+    through filters and retrievable by id indefinitely. Deletion is a
+    deliberate, exceptional act for mistaken creation or leaked content,
+    never ordinary closure.
+
+  backward-compatibility: >-
+    Legacy snapshot records keep their vocabulary (open, approved, rejected)
+    and their verbs, without reinterpretation into the new model: whether a
+    legacy approved snapshot was merged is unknowable after the fact, so no
+    mapping is fabricated. Legacy records remain readable, listable, and
+    operable through the existing paths for the life of the tool. New records
+    are created only in the new model. Nothing rewrites a legacy record.
+
+  adjacent-work-reconciliation: >-
+    The interim source-head merge guard (kanban 88, shipped) is absorbed by
+    the source side of the merge gate, including its deleted-branch refusal;
+    its diagnostics — name both identities, teach the recovery flow — carry
+    into the gate's refusal errors. A PR whose source branch is gone can
+    still be commented on and closed with any reason; it can never merge.
+    The target-head guard (kanban 698) is absorbed by the base side of the
+    gate and the compare-and-swap; implementing it on the current model
+    remains worthwhile before this design ships, and its diagnostics carry
+    over the same way. The stale-SHA-after-rebase defect (kanban 212) is
+    absorbed in part: its diagnostic scope loses its premise here because
+    rebase becomes ordinary movement, and its unanchored-disposition scope
+    is absorbed by PR-level threads for records created in the new model —
+    legacy records never gain them, so dispositions on already-stranded
+    legacy snapshots keep needing 212's interim relief; on the current
+    model only a diagnostic-level interim fix is safe before the reshape.
+    Comments after closure (kanban 152) and honest closure (kanban 157) are
+    absorbed by the comment lifecycle and the closure vocabulary for every
+    record created after the reshape; because nothing rewrites a legacy
+    record, the snapshots already stranded in an open or false status stay
+    as they are, and correcting or retiring those specific records remains
+    interim work under 157 and the delete verb, outside this reshape.
+    Interim implementations of the two features themselves are not
+    recommended because they would build on surfaces this design replaces.
+    The approve alias removal (kanban 240) is interim containment
+    that this design makes permanent by contract. The delete verb (kanban
+    238) survives unchanged in meaning. The metadata concurrency contract
+    (kanban 574) is a prerequisite: its compare-and-swap store primitive is
+    the write path every mutation here assumes, and implementation of this
+    design does not begin until it lands.
+
+  feasibility: >-
+    Every mechanism reduces to existing plumbing: per-event pinning refs are
+    the current head and base refs generalized; the merge gate is one
+    ancestry check over pinned commits plus one update-ref invocation with
+    an expected old value; event diffs and interdiffs are recomputed from
+    pinned commits; anchor re-mapping is a diff walk between two reviewed
+    trees, and its degraded mode — mark everything outdated — is safe. No
+    serialization format, transport, or dependency changes are required.
+
+  residual-risks: >-
+    Strict double-equality gating raises re-review frequency; if
+    interdiff-scoped re-review proves too coarse, pressure will build to
+    loosen the gate rather than improve the review surface — the gate is the
+    contract, the surface is the variable. Anchor re-mapping is the
+    highest-complexity component; a weak remapper degrades to marking every
+    thread outdated, which is safe but noisy.
+
+  stated-assumptions: >-
+    Pinning refs — two per event, plus two per anchored thread whose pair no
+    event has recorded, the latter released when a matching event lands and
+    otherwise held until the record is deleted — keep repository ref count
+    acceptable at gitpr's scale of one repository and one team; a PR with
+    dozens of threads costs tens of refs. Recomputing an event's diff from
+    its pinned commits is deterministic for a fixed git version and diff
+    algorithm; a git upgrade may shift hunk boundaries, which at worst
+    marks affected threads outdated.

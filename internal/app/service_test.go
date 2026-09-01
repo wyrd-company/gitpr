@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/oklog/ulid/v2"
 
 	"github.com/wyrd-company/gitpr/internal/model"
 )
@@ -141,6 +144,26 @@ func TestUpdateCommentRejectsInvalidIndex(t *testing.T) {
 	}
 }
 
+func TestLegacyCommentMutationsPreserveOrderAndCardinality(t *testing.T) {
+	service, pr := newTestPR(t)
+	for _, text := range []string{"first", "second", "third"} {
+		if _, err := service.AddComment(pr.ID, testComment(text)); err != nil {
+			t.Fatalf("AddComment(%q) error = %v", text, err)
+		}
+	}
+
+	if _, err := service.UpdateComment(pr.ID, 1, testComment("second updated")); err != nil {
+		t.Fatalf("UpdateComment() error = %v", err)
+	}
+	loaded, _, err := service.LoadPR(pr.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := commentTexts(loaded.Comments); strings.Join(got, ",") != "first,second updated,third" {
+		t.Fatalf("comments after add and update = %v, want original order and cardinality", got)
+	}
+}
+
 func TestMergePRMergesMatchingSourceHeadAndCleansUp(t *testing.T) {
 	repoPath, featurePath, service, pr := newMergeTestPR(t)
 
@@ -197,6 +220,25 @@ func TestMergePRRefusesDeletedSourceBranch(t *testing.T) {
 	}
 }
 
+func TestMergePRRefusesConcurrentCloseBeforeBranchMerge(t *testing.T) {
+	repoPath, _, serviceA, pr := newMergeTestPR(t)
+	serviceB := secondService(t, repoPath)
+	serviceA.beforeMergeHook = func() {
+		serviceA.beforeMergeHook = nil
+		if _, _, err := serviceB.RejectPR(pr.ID); err != nil {
+			t.Errorf("concurrent RejectPR() error = %v", err)
+		}
+	}
+
+	_, _, err := serviceA.MergePR(context.Background(), pr.ID, false)
+	if err == nil || !strings.Contains(err.Error(), "already closed") {
+		t.Fatalf("MergePR() error = %v, want closed-before-merge refusal", err)
+	}
+	if got := testGit(t, repoPath, "rev-parse", "main"); got == pr.SourceHeadSHA {
+		t.Fatalf("main advanced to %s after concurrent close", got)
+	}
+}
+
 func newTestPR(t *testing.T) (*Service, model.PR) {
 	t.Helper()
 
@@ -217,14 +259,43 @@ func newTestPR(t *testing.T) (*Service, model.PR) {
 		t.Fatalf("NewService() error = %v", err)
 	}
 
-	pr, _, err := svc.CreatePR(context.Background(), CreatePRRequest{
-		Title:    "test PR",
-		Worktree: repoPath,
-	})
-	if err != nil {
-		t.Fatalf("CreatePR() error = %v", err)
-	}
+	pr := createLegacyTestPR(t, svc, repoPath, "test PR")
 	return svc, pr
+}
+
+func secondService(t *testing.T, repoPath string) *Service {
+	t.Helper()
+	service, err := NewService(repoPath)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	return service
+}
+
+func testComment(text string) model.Comment {
+	return model.Comment{
+		FilePath:  "app.txt",
+		LineStart: 2,
+		LineEnd:   2,
+		Comment:   text,
+	}
+}
+
+func assertCommentTextsExactlyOnce(t *testing.T, service *Service, id string, want ...string) {
+	t.Helper()
+	pr, _, err := service.LoadPR(id)
+	if err != nil {
+		t.Fatalf("LoadPR() error = %v", err)
+	}
+	counts := make(map[string]int)
+	for _, comment := range pr.Comments {
+		counts[comment.Comment]++
+	}
+	for _, text := range want {
+		if counts[text] != 1 {
+			t.Errorf("comment %q count = %d, want 1; all comments = %v", text, counts[text], commentTexts(pr.Comments))
+		}
+	}
 }
 
 func newMergeTestPR(t *testing.T) (string, string, *Service, model.PR) {
@@ -248,15 +319,75 @@ func newMergeTestPR(t *testing.T) (string, string, *Service, model.PR) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pr, _, err := service.CreatePR(context.Background(), CreatePRRequest{
-		Title:    "Guard reviewed snapshot",
-		Worktree: featurePath,
-	})
+	pr := createLegacyTestPR(t, service, featurePath, "Guard reviewed snapshot")
+
+	return repoPath, featurePath, service, pr
+}
+
+func newMergeConflictTestPR(t *testing.T) (string, *Service, model.PR) {
+	t.Helper()
+	repoPath := t.TempDir()
+	testGit(t, repoPath, "init", "-b", "main")
+	testGit(t, repoPath, "config", "user.name", "gitpr tests")
+	testGit(t, repoPath, "config", "user.email", "gitpr@example.test")
+	writeTestFile(t, repoPath, "record.txt", "shared\n")
+	testGit(t, repoPath, "add", "record.txt")
+	testGit(t, repoPath, "commit", "-m", "base")
+
+	featurePath := filepath.Join(t.TempDir(), "feature")
+	testGit(t, repoPath, "worktree", "add", "-b", "feature", featurePath, "HEAD")
+	writeTestFile(t, featurePath, "record.txt", "feature\n")
+	testGit(t, featurePath, "add", "record.txt")
+	testGit(t, featurePath, "commit", "-m", "feature")
+	writeTestFile(t, repoPath, "record.txt", "main\n")
+	testGit(t, repoPath, "add", "record.txt")
+	testGit(t, repoPath, "commit", "-m", "main")
+
+	service, err := NewService(repoPath)
 	if err != nil {
 		t.Fatal(err)
 	}
+	pr := createLegacyTestPR(t, service, featurePath, "conflicting changes")
+	return repoPath, service, pr
+}
 
-	return repoPath, featurePath, service, pr
+func createLegacyTestPR(t *testing.T, service *Service, worktree, title string) model.PR {
+	t.Helper()
+	ctx := context.Background()
+	repo, branch, base, _, err := service.repoContext(ctx, worktree, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileDiffs, err := repo.FileDiffs(ctx, base, branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commits, err := repo.Commits(ctx, base, branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceHead, err := repo.HeadSHA(ctx, branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseHead, err := repo.HeadSHA(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mergeBase, err := repo.MergeBase(ctx, sourceHead, baseHead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conflicts, err := repo.DetectMergeConflicts(ctx, base, sourceHead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	pr := model.PR{ID: ulid.Make().String(), Title: title, SourceBranch: branch, SourceWorktreePath: repo.WorktreePath, RepositoryRoot: repo.CommonRoot, BaseBranch: base, SourceHeadSHA: sourceHead, BaseHeadSHA: baseHead, MergeBaseSHA: mergeBase, FileDiffs: fileDiffs, Commits: commits, MergeConflicts: conflicts, Status: model.StatusOpen, CreatedAt: now, UpdatedAt: now}
+	if _, err := service.store.SavePR(pr, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	return pr
 }
 
 func commentsAtAnchor(comments []model.Comment, filePath string, lineStart, lineEnd int) []model.Comment {

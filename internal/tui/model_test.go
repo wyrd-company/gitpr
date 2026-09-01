@@ -6,6 +6,15 @@ import (
 	"github.com/wyrd-company/gitpr/internal/model"
 )
 
+func TestListLoadedKeepsBothRecordShapesWithoutSkippedMessage(t *testing.T) {
+	m := &Model{}
+	updated, _ := m.Update(listLoadedMsg{records: []model.Record{model.PR{ID: "legacy", Status: model.StatusOpen}, model.PR2{Schema: 2, ID: "branch", State: model.PRStateOpen}}})
+	got := updated.(*Model)
+	if len(got.openRecords) != 2 || got.infoMessage != "" {
+		t.Fatalf("TUI records = %d, message %q", len(got.openRecords), got.infoMessage)
+	}
+}
+
 func TestPRLoadedResetsCommentCycle(t *testing.T) {
 	m := &Model{
 		editingCommentIndex: 0,
@@ -15,7 +24,7 @@ func TestPRLoadedResetsCommentCycle(t *testing.T) {
 		},
 	}
 
-	updated, _ := m.Update(prLoadedMsg{pr: model.PR{ID: "test"}})
+	updated, _ := m.Update(prLoadedMsg{record: model.PR{ID: "test"}})
 	got := updated.(*Model)
 
 	if got.editingCommentIndex != -1 {

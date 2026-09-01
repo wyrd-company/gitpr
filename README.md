@@ -1,40 +1,21 @@
 # gitpr
 
-`gitpr` is a local Go CLI/TUI for reviewing worktree branches as lightweight pull requests against the local default branch.
+`gitpr` is a local Go CLI/TUI for reviewing worktree branches as lightweight
+pull requests. Review metadata and retained commit identities live in Git refs,
+so every worktree and clone can use the same records without a server.
 
 ![gitpr local review demo](docs/assets/demo.gif)
 
-## What It Does
-
-- Stores PR snapshots in Git refs under `refs/gitpr/...`
-- Lists open and closed PRs from the command line
-- Shows full PR YAML or just review comments
-- Opens a TUI for human review with a side-by-side diff view
-- Saves comments and merge conflicts back into the PR metadata
-- Merges approved work into the default branch
-- Exports PR refs into a directory for debugging and UAT
-
-## Git Ref Layout
-
-`gitpr` stores PR data in Git refs, so linked worktrees and separate clones can use shared PR metadata without a `.prs` working-tree directory.
-
-- `refs/gitpr/pr/<ulid>/meta`
-- `refs/gitpr/pr/<ulid>/head`
-- `refs/gitpr/pr/<ulid>/base`
-- `refs/gitpr/index/open/<ulid>`
-- `refs/gitpr/index/approved/<ulid>`
-- `refs/gitpr/index/rejected/<ulid>`
-- `refs/gitpr/config/meta`
-
-Each PR gets a ULID identifier. The CLI accepts the full ID or a unique prefix. The list output and TUI show a shortened prefix.
-
 ## Versioning
 
-This repo uses [`tagver`](https://github.com/wyrd-company/tagver) for tag-driven version calculation.
+This repo uses [`tagver`](https://github.com/wyrd-company/tagver) for tag-driven
+version calculation.
 
 - Release tags should use the `vX.Y.Z` format
-- `task build` embeds the current calculated version into `gitpr --version` when `tagver` is installed
-- The release workflow validates that the pushed tag matches the `tagver`-calculated version before publishing
+- `task build` embeds the current calculated version into `gitpr --version` when
+  `tagver` is installed
+- The release workflow validates that the pushed tag matches the
+  `tagver`-calculated version before publishing
 
 Helpful commands:
 
@@ -67,14 +48,6 @@ brew tap wyrd-company/tools
 brew install gitpr
 ```
 
-## Commands
-
-Build:
-
-```bash
-task build
-```
-
 Taskfile shortcuts:
 
 ```bash
@@ -92,286 +65,192 @@ task uat:paths
 task uat:reset
 ```
 
-Create a PR from the current worktree:
+## Branch-based review
+
+A pull request tracks a source branch and a base branch. Each approve or reject
+operation appends an immutable review event for one exact source/base head pair;
+no diff is stored in the record.
+
+Create and review a PR:
 
 ```bash
-gitpr create --title "Add diff viewer" --description "Initial reviewable version"
+gitpr create --title "Improve validation" --description "Adds boundary checks"
+gitpr create --worktree /path/to/worktree --base main --title "Improve validation"
+gitpr review <pr-id>
 ```
 
-Create a PR from another worktree path:
+Only one open branch-based PR can track a source/base pair. The review YAML
+contains a machine-readable `basis`, the live diff and base containment,
+projected thread state, the latest event, and an interdiff when a prior event
+exists. Review performs no writes.
+
+Record a verdict with the exact reviewed basis:
 
 ```bash
-gitpr create --worktree /path/to/worktree --title "Fix merge handling"
+gitpr approve <pr-id> --basis <source-head>:<base-head>
+gitpr reject <pr-id> --basis <source-head>:<base-head>
+gitpr approve <pr-id> --source-head <source-head> --base-head <base-head>
 ```
 
-List PRs:
+Both heads are mandatory full 40-character lowercase commit IDs. Approve refuses
+live source or base drift. Reject records the supplied existing pair even if
+branches moved. A verdict does not merge or change PR state.
+
+Merge the latest accepted event:
 
 ```bash
-gitpr list --status open
-gitpr list --status closed
-gitpr list --status approved
-gitpr list --status rejected
-gitpr list --status all
+gitpr merge <pr-id>
+gitpr merge <pr-id> --cleanup
 ```
 
-Show a full PR:
+Merge requires exact live heads and strict fast-forward ancestry. The base ref,
+metadata, state index, and open-pair ownership change in one transaction.
+`--cleanup` removes the recorded source worktree and source branch after
+success.
+
+A branch-based base-worktree refresh or cleanup failure after merge exits
+non-zero and prints a repair command; the merge remains complete. Legacy records
+retain their historical exit-zero cleanup behavior.
+
+## Comment threads
+
+Create an anchored or PR-level thread, reply, and manage its state:
 
 ```bash
-gitpr show 01K0ABCDEFGH
+gitpr comment <pr-id> --file internal/example.go --line-start 20 \
+  --line-end 24 --side new --text "Handle the empty value here."
+gitpr comment <pr-id> --pr-level --text "Ready for another review."
+gitpr comment <pr-id> --thread <thread-id> --text "Updated."
+gitpr resolve <pr-id> <thread-id>
+gitpr reopen <pr-id> <thread-id>
+gitpr comments <pr-id>
 ```
 
-Open an interactive picker and then show the selected PR:
+`--side` accepts `new` by default or `old`. Omit head flags to use live branch
+heads, or pass `--basis` or both head flags. PR-level threads refuse file, line,
+and side flags. Resolved threads accept replies. Comments are legal after merge
+or closure and carry a post-closure marker. Anchored ranges move with unchanged
+content; changed or unmappable ranges remain visible as outdated.
+
+## Closure and retention
+
+Close an open branch-based PR without changing branches or worktrees:
 
 ```bash
-gitpr show
-gitpr show --status open
-gitpr show --status approved
+gitpr close <pr-id> --reason abandoned --note "Not proceeding"
+gitpr close <pr-id> --reason superseded --superseded-by <replacement-pr-id>
+gitpr close <pr-id> --reason integrated --destination main \
+  --commit <landed-commit-sha>
+gitpr close <pr-id> --reason integrated --destination main \
+  --patch-id <patch-equivalent-id>
 ```
 
-Show only comments:
+Integrated closure requires a destination and at least one repeated `--commit`
+or `--patch-id`. Superseded closure requires another existing branch-based PR.
+Evidence flags for other reasons are refused.
+
+Merged and closed records remain retained. Deletion is exceptional:
 
 ```bash
-gitpr comments 01K0ABCDEFGH
+gitpr delete <pr-id>          # preview and warning; exits non-zero
+gitpr delete <pr-id> --force  # remove metadata, indexes, and retained refs
 ```
 
-Open an interactive picker and then show comments for the selected PR:
+Deleting retained refs may make reviewed commits collectable by Git.
+
+## Listing and inspection
 
 ```bash
-gitpr comments
-gitpr comments --status open
-gitpr comments --status approved
+gitpr list
+gitpr list --state closed --reason abandoned
+gitpr list --state merged
+gitpr list --state approved
+gitpr list --all
+gitpr show <pr-id>
+gitpr comments <pr-id>
 ```
 
-Add a comment from the CLI:
+`list` defaults to open records. Filters are vocabulary-scoped:
 
-```bash
-gitpr comment 01K0ABCDEFGH \
-  --file internal/tui/tui.go \
-  --line-start 120 \
-  --line-end 126 \
-  --text "Please handle the empty state here." \
-  --commit abc1234
-```
+| Filter                 | Record format     |
+| ---------------------- | ----------------- |
+| `open`                 | Both formats      |
+| `merged`, `closed`     | Branch-based only |
+| `approved`, `rejected` | Legacy only       |
 
-Update an existing comment by index (anchor flags must match the stored comment):
+`--reason integrated|superseded|abandoned` requires `--state closed`. `--status`
+is a deprecated alias for `--state`. `--all` cannot be combined with a state or
+reason filter. Branch-based `show` output includes events, threads, closure
+evidence, and a thread summary.
 
-```bash
-gitpr comment 01K0ABCDEFGH \
-  --update 0 \
-  --file internal/tui/tui.go \
-  --line-start 120 \
-  --line-end 126 \
-  --text "Revised wording."
-```
-
-Refresh merge-conflict metadata without opening the TUI:
-
-```bash
-gitpr refresh 01K0ABCDEFGH
-```
-
-Request changes from the CLI:
-
-```bash
-gitpr reject 01K0ABCDEFGH
-# or
-gitpr request-changes 01K0ABCDEFGH
-```
-
-Merge and mark approved from the CLI:
-
-```bash
-gitpr merge 01K0ABCDEFGH
-# or
-gitpr approve 01K0ABCDEFGH
-
-# Remove the source worktree and branch after merge:
-gitpr merge 01K0ABCDEFGH --cleanup
-```
-
-Merge refuses if the source branch was deleted or moved past the reviewed
-`source_head_sha`. Reject the stale PR and create a new PR from the current
-branch head so the revised snapshot receives review.
-
-Launch the TUI:
+## TUI
 
 ```bash
 gitpr tui
 ```
 
-Export a PR ref for debugging:
+The list displays both record formats. A branch-based record opens a read-only
+detail view with its branches, state, latest event, thread summary, and closure
+evidence. Branch-based review, verdict, merge, and comment actions use the CLI.
 
-```bash
-gitpr debug export 01K0ABCDEFGH --ref meta --to /tmp/gitpr-meta
-gitpr debug export 01K0ABCDEFGH --ref head --to /tmp/gitpr-head
-gitpr debug export 01K0ABCDEFGH --ref base --to /tmp/gitpr-base
-```
-
-## TUI Keys
+Existing legacy records retain the historical TUI diff and actions:
 
 - `j` / `k`: move
-- `Enter`: open selected PR from the list
-- `Esc`: go back to the PR list
-- `v`: start or clear a block selection in the diff
-- `c`: cycle through comments at the current anchor, then append a new one on the current line or selected block
-- `o`: expand or collapse inline comments for the current line or selected block
-- `r`: request changes and mark the PR as `rejected`
-- `m`: merge if there are no merge conflicts
+- `Enter`: open the selected record
+- `Esc`: return to the list
+- `v`: select a diff block
+- `c`: cycle or edit legacy inline comments
+- `o`: expand or collapse legacy comments
+- `r`: reject a legacy snapshot
+- `m`: merge a legacy snapshot
 - `q`: quit
 
-When commenting in the TUI, press `c` repeatedly on the same line to cycle through existing comments at that anchor before opening a new-comment buffer. `Enter` inserts a newline while editing, `Ctrl+S` saves, and `Esc` cancels.
+## Prior-generation snapshot records
 
-When merging from the TUI, the app asks whether the source worktree should also be cleaned up.
+Records without a `schema` field are legacy snapshots. No command creates them,
+but existing records remain readable and operable with their original YAML shape
+and vocabulary.
 
-## PR Lifecycle
+- `show`, `comments`, `comment`, `reject`, `merge`, and `delete --force`
+  dispatch to legacy behavior.
+- `refresh` recomputes stored merge-conflict metadata for an open legacy
+  snapshot.
+- Legacy comment `--update` and `--commit` flags retain their historical
+  meaning.
+- Legacy states remain `open`, `approved`, and `rejected`; they are not
+  reinterpreted.
+- Approve is not a merge alias. `gitpr approve` applies only to branch-based
+  records.
 
-- `open`: reviewable and visible in the TUI
-- `approved`: merged and indexed as approved
-- `rejected`: request-changes outcome, indexed as rejected
+## Git ref storage
 
-This version uses the simple lifecycle: once a PR is rejected, it is closed. A new revision should be submitted as a new PR.
+Branch-based records use:
 
-## YAML Shape
-
-Example:
-
-```yaml
-id: 01K0ABCDEFGHJKMNPQRSTVWXYZ
-title: Add review TUI
-source_branch: feature/review-tui
-source_worktree_path: /repo-worktrees/review-tui
-repository_root: /repo
-base_branch: main
-source_head_sha: abcdef1234567890abcdef1234567890abcdef12
-base_head_sha: 1234567890abcdef1234567890abcdef12345678
-merge_base_sha: ffffffffffffffffffffffffffffffffffffffff
-description: Initial implementation of the review experience.
-file_diffs:
-  - old_path: internal/tui/tui.go
-    new_path: internal/tui/tui.go
-    status: modified
-    patch: |
-      diff --git a/internal/tui/tui.go b/internal/tui/tui.go
-      ...
-    hunks:
-      - header: ""
-        old_start: 40
-        old_lines: 3
-        new_start: 40
-        new_lines: 6
-        lines:
-          - kind: context
-            old_line: 40
-            new_line: 40
-            content: existing code
-          - kind: add
-            new_line: 41
-            content: new code
-commits:
-  - sha: abcdef1234567890
-    message: Add review TUI
-comments:
-  - file_path: internal/tui/tui.go
-    line_start: 41
-    line_end: 43
-    comment: Please split this state transition out.
-    commit_sha: abcdef1234567890
-    created_at: 2026-04-25T00:00:00Z
-merge_conflicts:
-  - path: internal/tui/tui.go
-    message: "CONFLICT (content): Merge conflict in internal/tui/tui.go"
-status: open
-created_at: 2026-04-25T00:00:00Z
-updated_at: 2026-04-25T00:00:00Z
-closed_at: 2026-04-25T00:05:00Z
+```text
+refs/gitpr/pr/<id>/meta
+refs/gitpr/pr/<id>/events/<event-id>/{head,base}
+refs/gitpr/pr/<id>/anchors/<thread-id>/{head,base}
+refs/gitpr/index/{open,merged,closed}/<id>
+refs/gitpr/openpair/<branch-pair-hash>
 ```
 
-## Notes
+Legacy snapshots retain their `meta`, `head`, `base`, and
+`open|approved|rejected` index refs. Each record uses a ULID; commands accept a
+full ID or unique prefix.
 
-- Default branch detection prefers `origin/HEAD`, then `main`, then `master`
-- Merge conflict detection is saved into the PR YAML
-- Merge writes directly into the local base branch using the reviewed `source_head_sha`
-- When the base branch is checked out, merge synchronizes that worktree and refuses before advancing the branch if local changes would be overwritten
-- If the base branch was forcibly checked out in multiple worktrees, detach it in all but one before merging
-- `debug export` is the intended way to inspect ref-backed state on disk
+## Debugging
 
-## UAT
+```bash
+gitpr debug export <pr-id> --ref meta --to /tmp/gitpr-meta
+gitpr debug export <legacy-pr-id> --ref head --to /tmp/gitpr-head
+gitpr debug export <legacy-pr-id> --ref base --to /tmp/gitpr-base
+```
 
-Recommended user acceptance test flow:
+## Development
 
-1. Build the binary.
+Run `task uat:setup` to prepare the manual acceptance flow.
 
 ```bash
 task build
+task check
 ```
-
-Or use:
-
-```bash
-task build
-task uat:setup
-```
-
-2. Create a throwaway repo and feature worktree.
-
-```bash
-mkdir /tmp/gitpr-uat && cd /tmp/gitpr-uat
-git init -b main
-git config user.name tester
-git config user.email tester@example.com
-printf "base\n" > app.txt
-git add app.txt
-git commit -m "base"
-git worktree add -b feature ../gitpr-uat-feature HEAD
-cd ../gitpr-uat-feature
-printf "feature\n" >> app.txt
-git add app.txt
-git commit -m "feature change"
-```
-
-3. Create a PR and inspect it.
-
-```bash
-/workspaces/gitpr/gitpr create --title "Feature PR" --description "UAT run"
-/workspaces/gitpr/gitpr list --status open
-/workspaces/gitpr/gitpr show <pr-id-prefix>
-```
-
-4. Add comments both ways.
-
-```bash
-/workspaces/gitpr/gitpr comment <pr-id-prefix> --file app.txt --line-start 2 --text "Looks good, but rename this."
-/workspaces/gitpr/gitpr comments <pr-id-prefix>
-/workspaces/gitpr/gitpr tui
-```
-
-5. Verify debug export.
-
-```bash
-/workspaces/gitpr/gitpr debug export <pr-id-prefix> --ref meta --to /tmp/gitpr-meta
-find /tmp/gitpr-meta -maxdepth 2 -type f
-```
-
-6. Verify merge path.
-
-From the TUI, merge the PR and choose whether to clean up the source worktree. Then confirm:
-
-```bash
-/workspaces/gitpr/gitpr list --status approved
-git log --oneline --graph --decorate --all
-git for-each-ref "refs/gitpr/*"
-git status --short
-```
-
-The base worktree should contain the merged files and `git status --short` should produce no output unless the worktree had unrelated local changes before the merge.
-
-7. Verify conflict blocking.
-
-Create another feature branch, change the same line on `main` and on the feature branch, then:
-
-```bash
-/workspaces/gitpr/gitpr create --title "Conflict PR"
-/workspaces/gitpr/gitpr show <pr-id-prefix>
-```
-
-The PR YAML should contain `merge_conflicts`, and the TUI should refuse merge until conflicts are gone.
