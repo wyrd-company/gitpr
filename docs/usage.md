@@ -4,7 +4,7 @@ title: Usage
 order: 3
 ---
 
-## Branch-based review flow
+## Review flow
 
 Create a PR for the current worktree branch, review its live basis, and use the
 exact reported pair for a verdict:
@@ -54,13 +54,43 @@ destructive operation; `--force` performs it and may make pinned commits
 collectable.
 
 The CLI accepts a full ULID or a unique prefix. `show` and `comments` open a
-picker without an ID. The TUI lists both formats and provides a read-only detail
-view for branch-based records; branch-based actions use the CLI review and basis
-flow.
+picker without an ID. The TUI lists records and provides a read-only detail
+view; actions use the CLI review and basis flow.
 
-## Existing legacy records
+## Legacy records
 
-Prior-generation records are immutable snapshots without a `schema` field.
-Existing snapshots retain their `open`, `approved`, and `rejected` vocabulary
-and historical comment, refresh, reject, merge, cleanup, and TUI behavior. No
-command creates a legacy snapshot.
+A record without a `schema` field is a legacy snapshot from the prior model.
+gitpr does not read, list, mutate, merge, or delete one: every command that
+takes its ID refuses and names this section, and `gitpr list` skips it with a
+count.
+
+There is no migration. Recreate in-flight work with `gitpr create` and remove
+the old record by hand. A legacy record is self-describing YAML behind plain
+Git refs, so no tool is needed to retrieve it.
+
+List the legacy records in a repository:
+
+```bash
+for ref in $(git for-each-ref --format='%(refname)' 'refs/gitpr/pr/*/meta'); do
+  git show "$ref:pr.yaml" | grep -q '^schema:' || echo "$ref"
+done
+```
+
+Read one, read its history, and export it before removal:
+
+```bash
+git show refs/gitpr/pr/<id>/meta:pr.yaml
+git log --patch refs/gitpr/pr/<id>/meta
+git show refs/gitpr/pr/<id>/meta:pr.yaml > <id>.pr.yaml
+```
+
+Remove every ref belonging to one record:
+
+```bash
+git for-each-ref --format='%(refname)' \
+  'refs/gitpr/pr/<id>/*' 'refs/gitpr/index/*/<id>' |
+  while read -r ref; do git update-ref -d "$ref"; done
+```
+
+Removal is irreversible, and the commits the record pinned become collectable
+by Git.

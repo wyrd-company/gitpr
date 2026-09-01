@@ -71,7 +71,7 @@ task uat:paths
 task uat:reset
 ```
 
-## Branch-based review
+## Review model
 
 A pull request tracks a source branch and a base branch. Each approve or reject
 operation appends an immutable review event for one exact source/base head pair;
@@ -85,7 +85,7 @@ gitpr create --worktree /path/to/worktree --base main --title "Improve validatio
 gitpr review <pr-id>
 ```
 
-Only one open branch-based PR can track a source/base pair. The review YAML
+Only one open PR can track a source/base pair. The review YAML
 contains a machine-readable `basis`, the live diff and base containment,
 projected thread state, the latest event, and an interdiff when a prior event
 exists. Review performs no writes.
@@ -114,9 +114,8 @@ metadata, state index, and open-pair ownership change in one transaction.
 `--cleanup` removes the recorded source worktree and source branch after
 success.
 
-A branch-based base-worktree refresh or cleanup failure after merge exits
-non-zero and prints a repair command; the merge remains complete. Legacy records
-retain their historical exit-zero cleanup behavior.
+A base-worktree refresh or cleanup failure after merge exits non-zero and prints
+a repair command; the merge remains complete.
 
 ## Comment threads
 
@@ -170,24 +169,17 @@ Deleting retained refs may make reviewed commits collectable by Git.
 gitpr list
 gitpr list --state closed --reason abandoned
 gitpr list --state merged
-gitpr list --state approved
 gitpr list --all
 gitpr show <pr-id>
 gitpr comments <pr-id>
 ```
 
-`list` defaults to open records. Filters are vocabulary-scoped:
-
-| Filter                 | Record format     |
-| ---------------------- | ----------------- |
-| `open`                 | Both formats      |
-| `merged`, `closed`     | Branch-based only |
-| `approved`, `rejected` | Legacy only       |
-
+`list` defaults to open records and accepts `--state open|merged|closed`.
 `--reason integrated|superseded|abandoned` requires `--state closed`. `--status`
 is a deprecated alias for `--state`. `--all` cannot be combined with a state or
-reason filter. Branch-based `show` output includes events, threads, closure
-evidence, and a thread summary.
+reason filter. `show` output includes events, threads, closure evidence, and a
+thread summary. Records gitpr cannot read — legacy snapshots and records written
+by a newer gitpr — are skipped with a count.
 
 ## TUI
 
@@ -195,38 +187,58 @@ evidence, and a thread summary.
 gitpr tui
 ```
 
-The list displays both record formats. A branch-based record opens a read-only
-detail view with its branches, state, latest event, thread summary, and closure
-evidence. Branch-based review, verdict, merge, and comment actions use the CLI.
-
-Existing legacy records retain the historical TUI diff and actions:
+The list shows open records and toggles to every state. A record opens a
+read-only detail view with its branches, state, latest event, thread summary,
+and closure evidence. Review, verdict, merge, and comment actions use the CLI.
 
 - `j` / `k`: move
 - `Enter`: open the selected record
+- `a`: toggle between open and all records
 - `Esc`: return to the list
-- `v`: select a diff block
-- `c`: cycle or edit legacy inline comments
-- `o`: expand or collapse legacy comments
-- `r`: reject a legacy snapshot
-- `m`: merge a legacy snapshot
 - `q`: quit
 
-## Prior-generation snapshot records
+## Legacy records
 
-Records without a `schema` field are legacy snapshots. No command creates them,
-but existing records remain readable and operable with their original YAML shape
-and vocabulary.
+A record without a `schema` field is a legacy snapshot from the prior model.
+gitpr does not read, list, mutate, merge, or delete one: every command that
+takes its ID refuses and names this section, and `gitpr list` skips it with a
+count.
 
-- `show`, `comments`, `comment`, `reject`, `merge`, and `delete --force`
-  dispatch to legacy behavior.
-- `refresh` recomputes stored merge-conflict metadata for an open legacy
-  snapshot.
-- Legacy comment `--update` and `--commit` flags retain their historical
-  meaning.
-- Legacy states remain `open`, `approved`, and `rejected`; they are not
-  reinterpreted.
-- Approve is not a merge alias. `gitpr approve` applies only to branch-based
-  records.
+There is no migration. Recreate in-flight work with `gitpr create` and remove
+the old record by hand. A legacy record is self-describing YAML behind plain
+Git refs, so no tool is needed to retrieve it.
+
+Enumerate the legacy records in a repository:
+
+```bash
+for ref in $(git for-each-ref --format='%(refname)' 'refs/gitpr/pr/*/meta'); do
+  git show "$ref:pr.yaml" | grep -q '^schema:' || echo "$ref"
+done
+```
+
+Read one completely, and read how it reached its current state:
+
+```bash
+git show refs/gitpr/pr/<id>/meta:pr.yaml
+git log --patch refs/gitpr/pr/<id>/meta
+```
+
+Export the record before removing it, if the evidence is not carried elsewhere:
+
+```bash
+git show refs/gitpr/pr/<id>/meta:pr.yaml > <id>.pr.yaml
+```
+
+Remove every ref belonging to one record:
+
+```bash
+git for-each-ref --format='%(refname)' \
+  'refs/gitpr/pr/<id>/*' 'refs/gitpr/index/*/<id>' |
+  while read -r ref; do git update-ref -d "$ref"; done
+```
+
+Removal is irreversible, and the commits the record pinned become collectable
+by Git.
 
 ## Git ref storage
 
@@ -240,16 +252,12 @@ refs/gitpr/index/{open,merged,closed}/<id>
 refs/gitpr/openpair/<branch-pair-hash>
 ```
 
-Legacy snapshots retain their `meta`, `head`, `base`, and
-`open|approved|rejected` index refs. Each record uses a ULID; commands accept a
-full ID or unique prefix.
+Each record uses a ULID; commands accept a full ID or unique prefix.
 
 ## Debugging
 
 ```bash
 gitpr debug export <pr-id> --ref meta --to /tmp/gitpr-meta
-gitpr debug export <legacy-pr-id> --ref head --to /tmp/gitpr-head
-gitpr debug export <legacy-pr-id> --ref base --to /tmp/gitpr-base
 ```
 
 ## Development

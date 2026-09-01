@@ -33,11 +33,10 @@ an explicit forced deletion.
 Each record has a ULID. The CLI accepts the full ID or a unique prefix; list
 output and the TUI use shortened IDs.
 
-## Prior-generation records
+## Legacy records
 
-Snapshot records without a schema discriminator remain supported. They keep
-their stored heads, diffs, comments, merge-conflict metadata,
-`open|approved|rejected` vocabulary, and historical operations. New PRs use the
-branch-based model.
+A record without a schema discriminator is a legacy snapshot from the prior
+model. gitpr refuses it and names the documented raw-git commands that read and
+remove it. In-flight work is recreated with `gitpr create`.
 
 ![gitpr local review demo](assets/demo.gif)
