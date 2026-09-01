@@ -2,12 +2,14 @@ package app
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/wyrd-company/gitpr/internal/model"
+	"github.com/wyrd-company/gitpr/internal/store"
 )
 
 func TestCreatePRWritesOpenSchema2BranchRecordWithoutSnapshotState(t *testing.T) {
@@ -67,6 +69,8 @@ func TestReviewPRReportsLiveBasisDiffContainmentAndMachinePair(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	testGit(t, repoPath, "tag", "feature", "refs/heads/main")
+	testGit(t, repoPath, "tag", "main", "refs/heads/feature")
 	report, err := service.ReviewPR(context.Background(), pr.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -79,6 +83,13 @@ func TestReviewPRReportsLiveBasisDiffContainmentAndMachinePair(t *testing.T) {
 	}
 	if len(report.Diff) != 1 || report.Diff[0].NewPath != "sample.txt" || !strings.Contains(report.Diff[0].Patch, "+feature") {
 		t.Fatalf("review diff = %#v", report.Diff)
+	}
+}
+
+func TestReviewPRRefusesLegacyRecord(t *testing.T) {
+	service, legacy := newTestPR(t)
+	if _, err := service.ReviewPR(context.Background(), legacy.ID); !errors.Is(err, store.ErrRecordSchema) {
+		t.Fatalf("legacy review error = %v, want ErrRecordSchema", err)
 	}
 }
 
