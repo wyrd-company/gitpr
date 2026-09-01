@@ -109,10 +109,15 @@ List PRs:
 ```bash
 gitpr list --status open
 gitpr list --status closed
+gitpr list --status merged
 gitpr list --status approved
 gitpr list --status rejected
 gitpr list --status all
 ```
+
+Status filters are vocabulary-scoped: `open` includes both legacy snapshots and
+branch-based PRs; `approved` and `rejected` include legacy snapshots only;
+`merged` and `closed` include branch-based PRs only.
 
 Show a full PR:
 
@@ -182,8 +187,6 @@ Merge and mark approved from the CLI:
 
 ```bash
 gitpr merge 01K0ABCDEFGH
-# or
-gitpr approve 01K0ABCDEFGH
 
 # Remove the source worktree and branch after merge:
 gitpr merge 01K0ABCDEFGH --cleanup

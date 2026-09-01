@@ -20,6 +20,7 @@ var version = "dev"
 
 func main() {
 	rootCmd := newRootCmd()
+	rootCmd.SetOut(os.Stdout)
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -257,7 +258,7 @@ func newCommentsCmd() *cobra.Command {
 				}
 			}
 
-			pr, _, err := svc.LoadPR(targetID)
+			pr, _, err := svc.LoadCommentsPR(targetID)
 			if err != nil {
 				return err
 			}
@@ -279,12 +280,12 @@ func newCommentsCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Print(string(out))
+			cmd.Print(string(out))
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVar(&status, "status", "all", "Filter by status when no PR ID is provided: open|approved|rejected|closed|all")
+	cmd.Flags().StringVar(&status, "status", "all", "Filter by status when no PR ID is provided: open|approved|rejected|merged|closed|all")
 	return cmd
 }
 
@@ -339,7 +340,7 @@ func newCommentCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				fmt.Printf("Updated comment %d on PR %s: %s:%d-%d\n", updateIndex, shortID(pr.ID), comment.FilePath, comment.LineStart, comment.LineEnd)
+				cmd.Printf("Updated comment %d on PR %s: %s:%d-%d\n", updateIndex, shortID(pr.ID), comment.FilePath, comment.LineStart, comment.LineEnd)
 				return nil
 			}
 
@@ -348,7 +349,7 @@ func newCommentCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("Saved comment on PR %s: %s:%d-%d\n", shortID(pr.ID), comment.FilePath, comment.LineStart, comment.LineEnd)
+			cmd.Printf("Saved comment on PR %s: %s:%d-%d\n", shortID(pr.ID), comment.FilePath, comment.LineStart, comment.LineEnd)
 			return nil
 		},
 	}
@@ -374,30 +375,25 @@ func newRefreshCmd() *cobra.Command {
 				return err
 			}
 
-			pr, _, err := svc.LoadPR(args[0])
-			if err != nil {
-				return err
-			}
-
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 
-			pr, err = svc.RefreshConflicts(ctx, pr)
+			pr, err := svc.RefreshPR(ctx, args[0])
 			if err != nil {
 				return err
 			}
 
 			if len(pr.MergeConflicts) == 0 {
-				fmt.Printf("PR %s has no merge conflicts\n", shortID(pr.ID))
+				cmd.Printf("PR %s has no merge conflicts\n", shortID(pr.ID))
 				return nil
 			}
 
-			fmt.Printf("PR %s has %d merge conflict(s):\n", shortID(pr.ID), len(pr.MergeConflicts))
+			cmd.Printf("PR %s has %d merge conflict(s):\n", shortID(pr.ID), len(pr.MergeConflicts))
 			for _, conflict := range pr.MergeConflicts {
 				if strings.TrimSpace(conflict.Path) != "" {
-					fmt.Printf("- %s: %s\n", conflict.Path, conflict.Message)
+					cmd.Printf("- %s: %s\n", conflict.Path, conflict.Message)
 				} else {
-					fmt.Printf("- %s\n", conflict.Message)
+					cmd.Printf("- %s\n", conflict.Message)
 				}
 			}
 			return nil
@@ -424,7 +420,7 @@ func newRejectCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("Rejected PR %s at %s\n", shortID(pr.ID), ref)
+			cmd.Printf("Rejected PR %s at %s\n", shortID(pr.ID), ref)
 			return nil
 		},
 	}
@@ -436,10 +432,9 @@ func newMergeCmd() *cobra.Command {
 	var cleanup bool
 
 	cmd := &cobra.Command{
-		Use:     "merge <pr-id>",
-		Aliases: []string{"approve"},
-		Short:   "Merge an open PR into its base branch and mark it approved",
-		Args:    cobra.ExactArgs(1),
+		Use:   "merge <pr-id>",
+		Short: "Merge an open PR into its base branch and mark it approved",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			svc, err := app.NewService(".")
 			if err != nil {
@@ -452,14 +447,14 @@ func newMergeCmd() *cobra.Command {
 			pr, ref, err := svc.MergePR(ctx, args[0], cleanup)
 			if err != nil {
 				if pr.ID != "" && ref != "" {
-					printMergeSuccess(pr, ref, cleanup)
-					fmt.Fprintf(os.Stderr, "Cleanup failed after merge: %v\n", err)
+					printMergeSuccess(cmd, pr, ref, cleanup)
+					cmd.PrintErrf("Cleanup failed after merge: %v\n", err)
 					return nil
 				}
 				return err
 			}
 
-			printMergeSuccess(pr, ref, cleanup)
+			printMergeSuccess(cmd, pr, ref, cleanup)
 			return nil
 		},
 	}
@@ -468,10 +463,10 @@ func newMergeCmd() *cobra.Command {
 	return cmd
 }
 
-func printMergeSuccess(pr model.PR, ref string, cleanup bool) {
-	fmt.Printf("Merged PR %s into %s at %s\n", shortID(pr.ID), pr.BaseBranch, ref)
+func printMergeSuccess(cmd *cobra.Command, pr model.PR, ref string, cleanup bool) {
+	cmd.Printf("Merged PR %s into %s at %s\n", shortID(pr.ID), pr.BaseBranch, ref)
 	if !cleanup {
-		fmt.Println("Source worktree kept.")
+		cmd.Println("Source worktree kept.")
 	}
 }
 
@@ -502,7 +497,7 @@ func newDebugCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("Exported %s for PR %s to %s\n", firstNonEmpty(which, "meta"), args[0], targetDir)
+			cmd.Printf("Exported %s for PR %s to %s\n", firstNonEmpty(which, "meta"), args[0], targetDir)
 			return nil
 		},
 	}
