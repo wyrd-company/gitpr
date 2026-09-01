@@ -100,14 +100,34 @@ func TestCreateDescriptionFileDashReadsStandardInputByteForByte(t *testing.T) {
 
 func TestCreateRejectsDescriptionAndDescriptionFileTogether(t *testing.T) {
 	dir := newCLITestRepo(t)
+	descPath := filepath.Join(t.TempDir(), "readable.txt")
+	if err := os.WriteFile(descPath, []byte("file body"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	withinDir(t, dir, func() {
 		cmd := newRootCmd()
 		var stdout, stderr bytes.Buffer
 		cmd.SetOut(&stdout)
 		cmd.SetErr(&stderr)
-		cmd.SetArgs([]string{"create", "--title", "Both", "--description", "inline", "--description-file", "/nonexistent"})
-		if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "description") || !strings.Contains(err.Error(), "description-file") {
+		cmd.SetArgs([]string{"create", "--title", "Both", "--description", "inline", "--description-file", descPath})
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatal("create with both --description and a readable --description-file succeeded, want a mutual-exclusivity refusal")
+		}
+		if !strings.Contains(err.Error(), "description") || !strings.Contains(err.Error(), "description-file") {
 			t.Fatalf("create with both description flags error = %v", err)
+		}
+
+		st, loadErr := store.New(dir)
+		if loadErr != nil {
+			t.Fatal(loadErr)
+		}
+		open, _, loadErr := st.ListPRs("open")
+		if loadErr != nil {
+			t.Fatal(loadErr)
+		}
+		if len(open) != 0 {
+			t.Fatalf("create wrote a record despite the mutual-exclusivity refusal: %#v", open)
 		}
 	})
 }
