@@ -44,6 +44,8 @@ func newRootCmd() *cobra.Command {
 	rootCmd.AddCommand(newRefreshCmd())
 	rootCmd.AddCommand(newRejectCmd())
 	rootCmd.AddCommand(newMergeCmd())
+	rootCmd.AddCommand(newCloseCmd())
+	rootCmd.AddCommand(newDeleteCmd())
 	rootCmd.AddCommand(newDebugCmd())
 	rootCmd.AddCommand(newTUICmd())
 
@@ -97,7 +99,8 @@ func newCreateCmd() *cobra.Command {
 }
 
 func newListCmd() *cobra.Command {
-	var status string
+	var state, status, reason string
+	var all bool
 
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -108,7 +111,20 @@ func newListCmd() *cobra.Command {
 				return err
 			}
 
-			prs, err := svc.ListPRs(status)
+			if cmd.Flags().Changed("state") && cmd.Flags().Changed("status") {
+				return errors.New("use --state or --status, not both")
+			}
+			filter := state
+			if cmd.Flags().Changed("status") {
+				filter = status
+			}
+			if all {
+				if cmd.Flags().Changed("state") || cmd.Flags().Changed("status") || reason != "" {
+					return errors.New("--all cannot be combined with --state, --status, or --reason")
+				}
+				filter = "all"
+			}
+			prs, err := svc.ListPRsWithReason(filter, model.ClosureReason(reason))
 			if err != nil {
 				return err
 			}
@@ -127,7 +143,10 @@ func newListCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&status, "status", "open", "Filter by status: open|approved|rejected|merged|closed|all")
+	cmd.Flags().StringVar(&state, "state", "open", "Filter by state: open|approved|rejected|merged|closed")
+	cmd.Flags().StringVar(&status, "status", "", "Deprecated alias for --state")
+	cmd.Flags().StringVar(&reason, "reason", "", "Filter closed branch-based PRs by reason")
+	cmd.Flags().BoolVar(&all, "all", false, "Show records in every vocabulary and state")
 	return cmd
 }
 
@@ -561,6 +580,45 @@ func printMergeSuccess(cmd *cobra.Command, pr model.PR, ref string, cleanup bool
 	if !cleanup {
 		cmd.Println("Source worktree kept.")
 	}
+}
+
+func newCloseCmd() *cobra.Command {
+	var reason, destination, supersededBy, note string
+	var commits, patchIDs []string
+	cmd := &cobra.Command{Use: "close <pr-id>", Short: "Close an open branch-based PR", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		svc, err := app.NewService(".")
+		if err != nil {
+			return err
+		}
+		pr, ref, err := svc.ClosePR(args[0], app.ClosePRRequest{Reason: model.ClosureReason(reason), Destination: destination, Commits: commits, PatchIDs: patchIDs, SupersededBy: supersededBy, Note: note})
+		if err != nil {
+			return err
+		}
+		cmd.Printf("Closed PR %s as %s at %s\n", shortID(pr.ID), pr.Closure.Reason, ref)
+		return nil
+	}}
+	cmd.Flags().StringVar(&reason, "reason", "", "Closure reason: integrated|superseded|abandoned")
+	cmd.Flags().StringVar(&destination, "destination", "", "Destination branch for integrated closure")
+	cmd.Flags().StringSliceVar(&commits, "commit", nil, "Resulting commit SHA for integrated closure (repeatable)")
+	cmd.Flags().StringSliceVar(&patchIDs, "patch-id", nil, "Patch-equivalent identity for integrated closure (repeatable)")
+	cmd.Flags().StringVar(&supersededBy, "superseded-by", "", "Replacement branch-based PR ID")
+	cmd.Flags().StringVar(&note, "note", "", "Optional closure note")
+	_ = cmd.MarkFlagRequired("reason")
+	return cmd
+}
+
+func newDeleteCmd() *cobra.Command {
+	return &cobra.Command{Use: "delete <pr-id>", Short: "Delete a PR record and all retained refs", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		svc, err := app.NewService(".")
+		if err != nil {
+			return err
+		}
+		if err := svc.DeleteRecord(args[0]); err != nil {
+			return err
+		}
+		cmd.Printf("Deleted PR %s\n", shortID(args[0]))
+		return nil
+	}}
 }
 
 func newDebugCmd() *cobra.Command {

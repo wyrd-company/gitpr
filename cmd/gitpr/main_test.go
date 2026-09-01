@@ -106,6 +106,36 @@ func TestMergeResultRenderingRejectsUnknownRecordWithoutPanic(t *testing.T) {
 	}
 }
 
+func TestCloseReasonListingAndDeleteCommandsUseStdout(t *testing.T) {
+	dir := newCLITestRepo(t)
+	withinDir(t, dir, func() {
+		id := strings.Fields(executeCLI(t, "create", "--title", "Lifecycle"))[2]
+		out := executeCLI(t, "close", id, "--reason", "abandoned", "--note", "not proceeding")
+		if !strings.Contains(out, "Closed PR") || !strings.Contains(out, "abandoned") {
+			t.Fatalf("close stdout=%q", out)
+		}
+		if got := executeCLI(t, "list"); !strings.Contains(got, "No PRs found.") {
+			t.Fatalf("default list=%q", got)
+		}
+		listed := executeCLI(t, "list", "--state", "closed", "--reason", "abandoned")
+		if !strings.Contains(listed, "Lifecycle") || !strings.Contains(listed, "closed") {
+			t.Fatalf("reason list=%q", listed)
+		}
+		show := executeCLI(t, "show", id)
+		for _, want := range []string{"reason: abandoned", "note: not proceeding"} {
+			if !strings.Contains(show, want) {
+				t.Errorf("show missing %q", want)
+			}
+		}
+		if out := executeCLI(t, "delete", id); !strings.Contains(out, "Deleted PR") {
+			t.Fatalf("delete stdout=%q", out)
+		}
+		if refs := cliGit(t, dir, "for-each-ref", "--format=%(refname)", "refs/gitpr"); strings.Contains(refs, id) {
+			t.Fatalf("refs remain: %s", refs)
+		}
+	})
+}
+
 func TestListAndShowRenderMixedShapesWhileLegacyOutputStaysStable(t *testing.T) {
 	dir := newCLITestRepo(t)
 	withinDir(t, dir, func() {
