@@ -108,10 +108,12 @@ proposed-design:
     judgment is a new event. Each event after the first records its
     predecessor — the immediately preceding event on the PR — which gives
     anchor re-mapping its from-side; the first event has none. The review
-    surface computes and offers the interdiff between an event basis and its
-    predecessor's diff, so a reviewer can scope re-review after a rebase or a
-    remediation round to what changed between judgments; whether to rely on
-    the interdiff or re-review in full remains the reviewer's choice. An
+    surface computes and offers the interdiff between the current basis —
+    the live head pair under review — and the latest event's recorded diff,
+    when an event exists, so a reviewer can scope re-review after a rebase
+    or a remediation round to what changed since the last judgment; whether
+    to rely on the interdiff or re-review in full remains the reviewer's
+    choice. An
     event whose diff is empty is legal; it records a judgment on an
     already-integrated or unchanged tree.
 
@@ -132,29 +134,46 @@ proposed-design:
     mask each other. The write itself is git update-ref on the base with the
     expected old value set to the event's recorded base head, so a base that
     moves between check and write fails the swap atomically. Merge never
-    creates a worktree. When the base branch is checked out in some worktree,
-    merge refuses if that worktree is dirty; when it is clean, merge performs
-    the ref swap and then explicitly refreshes that worktree's index and
-    working tree to the new head, so no worktree is left reporting phantom
-    modifications. Divergence between the live branches is surfaced before
+    creates a worktree. When the base branch is checked out in more than one
+    worktree, merge refuses. When it is checked out in exactly one, merge
+    refuses if that worktree is dirty; when it is clean, merge performs the
+    ref swap and then explicitly refreshes that worktree's index and working
+    tree to the new head, so no worktree is left reporting phantom
+    modifications. The ref swap is the merge: if the follow-up refresh
+    fails, the merge is already complete and correct, and the failure is
+    reported explicitly — naming the worktree and the command that repairs
+    it — never silently. Divergence between the live branches is surfaced before
     the verdict, not at merge: the review surface reports whether the live
     base head is contained in the live source head, which replaces the
     current model's stored merge_conflicts metadata and its refresh verb.
 
   approval-operation: >-
-    Approve atomically records an accepted event for the exact reviewed
-    commits and performs no other repository mutation: no base write, no
-    worktree creation, no cleanup. Reject records a rejected event
-    symmetrically. Approve and merge are distinct verbs with distinct
-    effects; no alias joins them.
+    Approve and reject take the reviewed head pair from the review output as
+    their expected heads. At event creation each resolves the live heads and
+    refuses when either differs from the expected pair, naming the expected
+    and the live identity; only on a match does it atomically record the
+    event for exactly that pair. A verdict therefore cannot certify commits
+    the reviewer did not read: movement between reviewing and judging fails
+    the verdict the same way movement between judging and merging fails the
+    merge. Beyond its event refs, approve performs no repository mutation:
+    no base write, no worktree creation, no cleanup. Reject is symmetric.
+    Approve and merge are distinct verbs with distinct effects; no alias
+    joins them.
 
   comment-lifecycle: >-
     A comment thread belongs to the PR. A thread is either anchored — to a
-    file, side, and line range in the diff of the event it was written
-    against — or PR-level, attached to the PR with no anchor, for
-    dispositions and discussion that concern the change as a whole. When a
-    new event is appended, anchored threads re-map through the diff between
-    the predecessor's and the new event's reviewed trees. A range that no
+    file, side, and line range in the diff of the head pair it was written
+    against, with that source-head and base-head pair recorded on the thread
+    — or PR-level, attached to the PR with no anchor, for dispositions and
+    discussion that concern the change as a whole. Anchoring binds to the
+    head pair, not to an event, because the ordinary flow writes findings
+    while no event exists yet: the reviewer reads the review basis, posts
+    comments against it, and only then issues the verdict that creates the
+    event. An event association is derived by pair matching — a thread
+    belongs with the event that recorded the same pair, when one exists.
+    When the heads move — a new basis is reviewed or a new event is appended
+    — anchored threads re-map through the diff between the thread's recorded
+    trees and the newest reviewed trees. A range that no
     longer maps, or whose content changed, marks the thread outdated: kept,
     displayed, flagged, never blocking — head equality already gates merge,
     so outdated marking is informational. PR-level threads never outdate.
@@ -168,17 +187,19 @@ proposed-design:
   command-surface: >-
     Verbs that take a PR id load the record and dispatch on its schema; a
     verb with no meaning for the record's shape refuses with an error naming
-    the distinction. New records are created only in the new model. The
-    new-model verb set — create (opens a branch-scoped PR without freezing a
-    snapshot), approve and reject (verdict, creating the event atomically),
-    merge (the gated compare-and-swap integration), close (ends the PR with
-    a required reason and evidence), resolve and reopen (thread state) —
-    refuses legacy ids. review is a pure read: it computes the event basis —
-    heads, merge base, diff, base-containment — and the interdiff against
-    the latest event, and persists nothing. Shared verbs — show, list,
-    comments, comment, delete — operate on both shapes by dispatch. The
-    legacy-only verbs — the snapshot merge, the snapshot reject, and refresh
-    — keep their existing behavior on legacy records; refresh has no
+    the distinction. create takes no id and always creates a new-model,
+    branch-scoped PR without freezing a snapshot; no verb creates a legacy
+    record. The new-model-only id verbs — approve (verdict, creating the
+    event atomically), close (ends the PR with a required reason and
+    evidence), resolve and reopen (thread state) — refuse legacy ids.
+    review is a pure read: it computes the review basis — heads, merge
+    base, diff, base-containment — and the interdiff against the latest
+    event, and persists nothing. The shared, schema-dispatched verbs —
+    show, list, comments, comment, delete, merge, and reject — operate on
+    both shapes: on a legacy id, merge and reject keep their existing
+    snapshot behavior; on a new-model id, merge is the gated
+    compare-and-swap integration and reject records a rejected event.
+    refresh is legacy-only and keeps its existing behavior; it has no
     new-model counterpart because base containment is computed by review,
     not stored. list renders both shapes: legacy records list under their
     own vocabulary (open, approved, rejected) and new records under theirs
@@ -213,12 +234,19 @@ proposed-design:
     over the same way. The stale-SHA-after-rebase defect (kanban 212) is
     absorbed in part: its diagnostic scope loses its premise here because
     rebase becomes ordinary movement, and its unanchored-disposition scope
-    is absorbed by PR-level threads; on the current model only a
-    diagnostic-level interim fix is safe before the reshape. Comments after
-    closure (kanban 152) and honest closure (kanban 157) are absorbed by the
-    comment lifecycle and the closure vocabulary; interim implementations
-    are not recommended because they would build on surfaces this design
-    replaces. The approve alias removal (kanban 240) is interim containment
+    is absorbed by PR-level threads for records created in the new model —
+    legacy records never gain them, so dispositions on already-stranded
+    legacy snapshots keep needing 212's interim relief; on the current
+    model only a diagnostic-level interim fix is safe before the reshape.
+    Comments after closure (kanban 152) and honest closure (kanban 157) are
+    absorbed by the comment lifecycle and the closure vocabulary for every
+    record created after the reshape; because nothing rewrites a legacy
+    record, the snapshots already stranded in an open or false status stay
+    as they are, and correcting or retiring those specific records remains
+    interim work under 157 and the delete verb, outside this reshape.
+    Interim implementations of the two features themselves are not
+    recommended because they would build on surfaces this design replaces.
+    The approve alias removal (kanban 240) is interim containment
     that this design makes permanent by contract. The delete verb (kanban
     238) survives unchanged in meaning. The metadata concurrency contract
     (kanban 574) is a prerequisite: its compare-and-swap store primitive is
