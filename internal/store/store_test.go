@@ -2,12 +2,36 @@ package store
 
 import (
 	"errors"
+	"go/ast"
+	"go/build"
+	"go/parser"
+	"go/token"
 	"os/exec"
 	"strings"
 	"testing"
 
 	"github.com/wyrd-company/gitpr/internal/model"
 )
+
+func TestProductionStoreAPIExcludesBeforeSaveHook(t *testing.T) {
+	pkg, err := build.Default.ImportDir(".", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := append(append([]string{}, pkg.GoFiles...), pkg.CgoFiles...)
+	for _, name := range files {
+		file, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if ok && function.Recv != nil && function.Name.Name == "SetBeforeSaveHook" {
+				t.Fatalf("production file %s exports SetBeforeSaveHook", name)
+			}
+		}
+	}
+}
 
 func TestStableGitEnvForcesCMessageLocale(t *testing.T) {
 	t.Setenv("LC_ALL", "fr_FR.UTF-8")
