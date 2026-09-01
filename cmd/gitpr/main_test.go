@@ -63,6 +63,36 @@ func TestReviewBasisCanBePastedIntoApproveCommandOnStdout(t *testing.T) {
 	})
 }
 
+func TestBranchBasedMergeCommandAdvancesBaseAndPrintsStdout(t *testing.T) {
+	dir := newCLITestRepo(t)
+	withinDir(t, dir, func() {
+		id := strings.Fields(executeCLI(t, "create", "--title", "CLI merge"))[2]
+		review := executeCLI(t, "review", id)
+		find := func(field string) string {
+			re := regexp.MustCompile(`(?m)^    ` + field + `: ([0-9a-f]{40})$`)
+			match := re.FindStringSubmatch(review)
+			if len(match) != 2 {
+				t.Fatalf("missing %s", field)
+			}
+			return match[1]
+		}
+		source, base := find("source_head_sha"), find("base_head_sha")
+		executeCLI(t, "approve", id, "--basis", source+":"+base)
+		out := executeCLI(t, "merge", id)
+		if !strings.Contains(out, "Merged PR") || !strings.Contains(out, "Source worktree kept.") {
+			t.Fatalf("merge stdout = %q", out)
+		}
+		if got := cliGit(t, dir, "rev-parse", "refs/heads/main"); got != source {
+			t.Fatalf("base = %s, want %s", got, source)
+		}
+		st, _ := store.New(dir)
+		pr, _, _ := st.LoadPR2(id)
+		if pr.State != model.PRStateMerged {
+			t.Fatalf("state = %s", pr.State)
+		}
+	})
+}
+
 func TestListAndShowRenderMixedShapesWhileLegacyOutputStaysStable(t *testing.T) {
 	dir := newCLITestRepo(t)
 	withinDir(t, dir, func() {
