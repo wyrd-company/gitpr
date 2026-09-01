@@ -132,6 +132,7 @@ func TestVerdictCommandsRejectPartialOrConflictingBasisFlags(t *testing.T) {
 	}{
 		{args: []string{"approve", "anything", "--source-head", "one"}, want: "both --source-head and --base-head"},
 		{args: []string{"reject", "anything", "--base-head", "two"}, want: "both --source-head and --base-head"},
+		{args: []string{"approve", "anything", "--basis", "one"}, want: "--basis must be"},
 		{args: []string{"approve", "anything", "--basis", "one:two", "--source-head", "one", "--base-head", "two"}, want: "either --basis"},
 	} {
 		root := newRootCmd()
