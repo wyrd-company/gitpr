@@ -156,6 +156,24 @@ func TestCloseReasonListingAndDeleteCommandsUseStdout(t *testing.T) {
 	})
 }
 
+func TestReasonMisuseNamesTheFilterFlagActuallySupplied(t *testing.T) {
+	dir := newCLITestRepo(t)
+	withinDir(t, dir, func() {
+		for _, tc := range []struct {
+			args []string
+			want string
+		}{{[]string{"list", "--state", "open", "--reason", "abandoned"}, "--state closed"}, {[]string{"list", "--status", "open", "--reason", "abandoned"}, "--status closed"}} {
+			cmd := newRootCmd()
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(&bytes.Buffer{})
+			cmd.SetArgs(tc.args)
+			if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("gitpr %v error=%v, want %q", tc.args, err, tc.want)
+			}
+		}
+	})
+}
+
 func TestListAndShowRenderMixedShapesWhileLegacyOutputStaysStable(t *testing.T) {
 	dir := newCLITestRepo(t)
 	withinDir(t, dir, func() {
