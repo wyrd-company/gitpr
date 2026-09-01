@@ -119,6 +119,21 @@ func TestLoadPRReturnsMetadataCommitVersion(t *testing.T) {
 	}
 }
 
+func TestLegacyListNarrowingDropsNoRecordsBeforeSchema2CreateShips(t *testing.T) {
+	st, _ := newStoreTestPR(t)
+	records, err := st.ListPRs("open")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := st.ListLegacyPRs("open")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(legacy) != len(records) {
+		t.Fatalf("temporary legacy narrowing dropped %d records; increment 6 must rewire service listing", len(records)-len(legacy))
+	}
+}
+
 func TestSavePRRejectsStaleMetadataVersionAndPreservesWinner(t *testing.T) {
 	stA, pr := newStoreTestPR(t)
 	stB, err := New(stA.repo.CommonRoot)

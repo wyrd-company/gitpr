@@ -28,6 +28,7 @@ func TestSavePR2EventAppendIsAtomicOnInterleavedConflict(t *testing.T) {
 	}
 	loser.State = model.PRStateMerged
 	loser.Events = completePR2(losingStore.repo.CommonRoot, base, head).Events
+	loser.Threads = []model.Thread{losingAnchorThread(base, head)}
 
 	losingStore.SetBeforeSaveHook(func() {
 		winner, version, loadErr := winnerStore.LoadPR2(pr.ID)
@@ -54,4 +55,6 @@ func TestSavePR2EventAppendIsAtomicOnInterleavedConflict(t *testing.T) {
 	assertMissingRef(t, losingStore, losingStore.indexRef2(model.PRStateMerged, pr.ID))
 	assertMissingRef(t, losingStore, eventRef(pr.ID, loser.Events[0].ID, "head"))
 	assertMissingRef(t, losingStore, eventRef(pr.ID, loser.Events[0].ID, "base"))
+	assertMissingRef(t, losingStore, anchorRef(pr.ID, loser.Threads[0].ID, "head"))
+	assertMissingRef(t, losingStore, anchorRef(pr.ID, loser.Threads[0].ID, "base"))
 }

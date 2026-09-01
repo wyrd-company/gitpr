@@ -39,6 +39,128 @@ func TestSavePR2RoundTripPreservesCompleteRecord(t *testing.T) {
 	}
 }
 
+func TestCrossShapeWritesAreRefusedWithoutChangingStoredRecord(t *testing.T) {
+	st, legacy := newStoreTestPR(t)
+	_, legacyVersion, err := st.LoadLegacyPR(legacy.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, legacyBefore, err := st.loadRecordData(legacy.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongPR2 := model.PR2{Schema: 2, ID: legacy.ID, State: model.PRStateOpen}
+	if _, err := st.SavePR2(wrongPR2, model.PRStateOpen, legacyVersion); !errors.Is(err, ErrSchema2WriteSchema) {
+		t.Fatalf("SavePR2 over legacy error = %v, want ErrSchema2WriteSchema", err)
+	}
+	_, legacyAfter, _ := st.loadRecordData(legacy.ID)
+	if !reflect.DeepEqual(legacyAfter, legacyBefore) {
+		t.Fatalf("legacy metadata changed\n before: %s\n after: %s", legacyBefore, legacyAfter)
+	}
+
+	pr2 := model.PR2{Schema: 2, ID: "01CROSSSHAPEGUARD000000000", State: model.PRStateOpen}
+	if _, err := st.SavePR2(pr2, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	_, pr2Version, err := st.LoadPR2(pr2.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, pr2Before, _ := st.loadRecordData(pr2.ID)
+	wrongLegacy := model.PR{ID: pr2.ID, Status: model.StatusOpen}
+	if _, err := st.SavePR(wrongLegacy, model.StatusOpen, pr2Version); !errors.Is(err, ErrLegacyWriteSchema) {
+		t.Fatalf("SavePR over schema 2 error = %v, want ErrLegacyWriteSchema", err)
+	}
+	_, pr2After, _ := st.loadRecordData(pr2.ID)
+	if !reflect.DeepEqual(pr2After, pr2Before) {
+		t.Fatalf("schema-2 metadata changed\n before: %s\n after: %s", pr2Before, pr2After)
+	}
+}
+
+func TestListPRsSkipsUnsupportedSchemaButLoadPRRejectsIt(t *testing.T) {
+	st, legacy := newStoreTestPR(t)
+	stubID := "01FORWARDSCHEMA300000000000"
+	writeRawPRRecord(t, st, stubID, "open", []byte("schema: 3\nid: "+stubID+"\nstate: open\n"))
+
+	records, err := st.ListPRs("open")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].RecordID() != legacy.ID {
+		t.Fatalf("open records = %#v, want supported legacy record only", records)
+	}
+	if _, _, err := st.LoadPR(stubID); !errors.Is(err, ErrUnsupportedSchema) {
+		t.Fatalf("schema-3 LoadPR error = %v, want ErrUnsupportedSchema", err)
+	}
+}
+
+func TestListPRsFiltersKeepLegacyAndSchema2VocabulariesDistinct(t *testing.T) {
+	st, base, head := newStoreTestHistory(t)
+	legacyStates := []model.Status{model.StatusOpen, model.StatusApproved, model.StatusRejected}
+	for i, state := range legacyStates {
+		pr := model.PR{ID: "01LEGACYFILTER000000000000" + string(rune('A'+i)), Status: state, SourceHeadSHA: head, BaseHeadSHA: base}
+		if _, err := st.SavePR(pr, "", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	newStates := []model.PRState{model.PRStateOpen, model.PRStateMerged, model.PRStateClosed}
+	for i, state := range newStates {
+		pr := model.PR2{Schema: 2, ID: "01SCHEMA2FILTER00000000000" + string(rune('A'+i)), State: state}
+		if _, err := st.SavePR2(pr, "", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	wants := map[string][]string{
+		"open":     {"01LEGACYFILTER000000000000A", "01SCHEMA2FILTER00000000000A"},
+		"approved": {"01LEGACYFILTER000000000000B"},
+		"rejected": {"01LEGACYFILTER000000000000C"},
+		"merged":   {"01SCHEMA2FILTER00000000000B"},
+		"closed":   {"01SCHEMA2FILTER00000000000C"},
+	}
+	for filter, want := range wants {
+		records, err := st.ListPRs(filter)
+		if err != nil {
+			t.Fatalf("ListPRs(%q): %v", filter, err)
+		}
+		got := make([]string, len(records))
+		for i, record := range records {
+			got[i] = record.RecordID()
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("ListPRs(%q) IDs = %v, want %v", filter, got, want)
+		}
+	}
+}
+
+func TestEventHistoryUsesInstantEqualityAndRejectsDuplicateIDs(t *testing.T) {
+	st, base, head := newStoreTestHistory(t)
+	pr := completePR2(st.repo.CommonRoot, base, head)
+	if _, err := st.SavePR2(pr, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	loaded, version, err := st.LoadPR2(pr.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instant := loaded.Events[0].Timestamp
+	loaded.Events[0].Timestamp = instant.In(time.FixedZone("equivalent", 0))
+	if _, err := st.SavePR2(loaded, loaded.State, version); err != nil {
+		t.Fatalf("equivalent timestamp rejected: %v", err)
+	}
+
+	loaded, version, err = st.LoadPR2(pr.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicate := loaded.Events[0]
+	duplicate.Verdict = model.VerdictRejected
+	loaded.Events = append(loaded.Events, duplicate)
+	if _, err := st.SavePR2(loaded, loaded.State, version); !errors.Is(err, ErrDuplicateEventID) {
+		t.Fatalf("duplicate event save error = %v, want ErrDuplicateEventID", err)
+	}
+}
+
 func TestLoadPRDispatchesAbsentSchemaToLegacyAndSchema2ToPR2(t *testing.T) {
 	st, legacy := newStoreTestPR(t)
 	legacy, _, err := st.LoadLegacyPR(legacy.ID)
@@ -156,6 +278,7 @@ func TestSavePR2RejectsStaleWriterWithoutPartialRefsOrIndex(t *testing.T) {
 	}
 	loser.State = model.PRStateMerged
 	loser.Events = completePR2(stA.repo.CommonRoot, base, head).Events
+	loser.Threads = []model.Thread{losingAnchorThread(base, head)}
 	if _, err := stA.SavePR2(loser, model.PRStateOpen, staleVersion); !errors.Is(err, ErrMetadataConflict) {
 		t.Fatalf("losing save error = %v", err)
 	}
@@ -166,6 +289,8 @@ func TestSavePR2RejectsStaleWriterWithoutPartialRefsOrIndex(t *testing.T) {
 	assertRef(t, stA, stA.indexRef2(model.PRStateOpen, pr.ID), winnerVersionFor(t, stA, pr.ID))
 	assertMissingRef(t, stA, stA.indexRef2(model.PRStateMerged, pr.ID))
 	assertMissingRef(t, stA, eventRef(pr.ID, loser.Events[0].ID, "head"))
+	assertMissingRef(t, stA, anchorRef(pr.ID, loser.Threads[0].ID, "head"))
+	assertMissingRef(t, stA, anchorRef(pr.ID, loser.Threads[0].ID, "base"))
 }
 
 func completePR2(root, base, head string) model.PR2 {
@@ -173,7 +298,7 @@ func completePR2(root, base, head string) model.PR2 {
 	updated := created.Add(time.Hour)
 	return model.PR2{
 		Schema: 2, ID: "01SCHEMA2ROUNDTRIP00000000", Title: "Schema two record",
-		SourceBranch: "topic", BaseBranch: "main", RepositoryRoot: root,
+		SourceBranch: "topic", SourceWorktreePath: root + "/topic-worktree", BaseBranch: "main", RepositoryRoot: root,
 		Description: "typed storage fixture", State: model.PRStateOpen,
 		Events: []model.ReviewEvent{{ID: "01EVENT00000000000000000000", SourceHeadSHA: head, BaseHeadSHA: base, MergeBaseSHA: base, Verdict: model.VerdictAccepted, Timestamp: updated}},
 		Threads: []model.Thread{
@@ -181,6 +306,26 @@ func completePR2(root, base, head string) model.PR2 {
 			{ID: "01THREADPRLEVEL00000000000", Kind: model.ThreadPRLevel, Status: model.ThreadResolved, Comments: []model.ThreadComment{{Body: "record-level disposition", Timestamp: updated, SourceHeadSHA: head, BaseHeadSHA: base, PostClosure: true}}},
 		},
 		CreatedAt: created, UpdatedAt: updated,
+	}
+}
+
+func losingAnchorThread(base, head string) model.Thread {
+	return model.Thread{ID: "01LOSINGANCHORTHREAD00000000", Kind: model.ThreadAnchored, Status: model.ThreadOpen, Anchor: &model.ThreadAnchor{
+		SourceHeadSHA: base, BaseHeadSHA: head, File: "sample.txt", Side: model.DiffSideSource, LineStart: 1, LineEnd: 1,
+	}}
+}
+
+func writeRawPRRecord(t *testing.T, st *Store, id, state string, data []byte) {
+	t.Helper()
+	commit, err := st.writeCommit(prFileName, data, "", "test: raw PR record")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.batchUpdateRefs([]refUpdate{
+		{Action: "update", Ref: st.metaRef(id), NewOID: commit, OldOID: zeroOID},
+		{Action: "update", Ref: indexRefPrefix + "/" + state + "/" + id, NewOID: commit, OldOID: zeroOID},
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 
