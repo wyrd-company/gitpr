@@ -21,6 +21,9 @@ func (s *Service) MergeRecord(ctx context.Context, id string, cleanup bool) (mod
 		return pr, ref, err
 	}
 	pr, ref, err := s.mergeBranchPR(ctx, id, cleanup)
+	if err != nil && ref == "" {
+		return nil, "", err
+	}
 	return pr, ref, err
 }
 
@@ -98,6 +101,13 @@ func (s *Service) mergeBranchPR(ctx context.Context, id string, cleanup bool) (m
 		return model.PR2{}, "", err
 	}
 	if baseWorktree != "" {
+		dirty, dirtyErr := repo.WorktreeDirtyAgainst(ctx, baseWorktree, latest.BaseHeadSHA)
+		if dirtyErr != nil || dirty {
+			if dirtyErr == nil {
+				dirtyErr = errors.New("worktree became dirty during merge")
+			}
+			return pr, ref, fmt.Errorf("merge succeeded, but worktree refresh was skipped for newly dirty worktree %s; repair after preserving its changes with git -C %s reset --hard %s: %w", baseWorktree, baseWorktree, latest.SourceHeadSHA, dirtyErr)
+		}
 		if err := repo.RefreshWorktree(ctx, baseWorktree, latest.SourceHeadSHA); err != nil {
 			return pr, ref, fmt.Errorf("merge succeeded, but worktree refresh failed for %s; repair with git -C %s reset --hard %s: %w", baseWorktree, baseWorktree, latest.SourceHeadSHA, err)
 		}

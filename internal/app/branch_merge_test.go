@@ -56,6 +56,15 @@ func TestMergePR2RefusesPRWithoutReviewEvent(t *testing.T) {
 	}
 }
 
+func TestMergeRecordReturnsNilRecordOnPreCommitRefusal(t *testing.T) {
+	dir, service := newBranchService(t)
+	pr, _, _ := service.CreatePR(context.Background(), CreatePRRequest{Title: "Refusal", Worktree: dir})
+	record, ref, err := service.MergeRecord(context.Background(), pr.ID, false)
+	if err == nil || record != nil || ref != "" {
+		t.Fatalf("refusal result = %#v, ref=%q, err=%v", record, ref, err)
+	}
+}
+
 func TestMergePR2RefusesTerminalRecord(t *testing.T) {
 	_, service, pr, _ := newAcceptedBranchPR(t)
 	stored, version, _ := service.store.LoadPR2(pr.ID)

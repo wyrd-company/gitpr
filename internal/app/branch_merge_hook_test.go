@@ -5,6 +5,7 @@ package app
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -76,5 +77,22 @@ func TestMergePR2ConcurrentVerdictWinsWithoutBaseAdvance(t *testing.T) {
 	}
 	if got := testGit(t, dir, "rev-parse", "refs/heads/main"); got != event.BaseHeadSHA {
 		t.Fatalf("base advanced to %s", got)
+	}
+}
+
+func TestMergePR2NewDirtyWorktreeSkipsRefreshAfterCompletedMerge(t *testing.T) {
+	dir, service, pr, event := newAcceptedBranchPR(t)
+	basePath := filepath.Join(t.TempDir(), "base")
+	testGit(t, dir, "worktree", "add", basePath, "main")
+	service.store.SetBeforeSaveHook(func() {
+		service.store.SetBeforeSaveHook(nil)
+		writeTestFile(t, basePath, "late.txt", "late change\n")
+	})
+	merged, ref, err := service.mergeBranchPR(context.Background(), pr.ID, false)
+	if err == nil || merged.State != model.PRStateMerged || ref == "" || !strings.Contains(err.Error(), "merge succeeded") || !strings.Contains(err.Error(), "newly dirty") || !strings.Contains(err.Error(), "reset --hard "+event.SourceHeadSHA) {
+		t.Fatalf("dirty-window result = %#v ref=%q err=%v", merged, ref, err)
+	}
+	if _, statErr := os.Stat(filepath.Join(basePath, "late.txt")); statErr != nil {
+		t.Fatalf("late change lost: %v", statErr)
 	}
 }

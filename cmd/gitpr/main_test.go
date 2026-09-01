@@ -12,6 +12,12 @@ import (
 	"github.com/wyrd-company/gitpr/internal/store"
 )
 
+type unknownRecord struct{}
+
+func (unknownRecord) RecordSchema() int          { return 99 }
+func (unknownRecord) RecordID() string           { return "unknown" }
+func (unknownRecord) RecordDisplayState() string { return "unknown" }
+
 func TestCreateAndReviewCommandsUseSchema2BasisYAML(t *testing.T) {
 	dir := newCLITestRepo(t)
 	withinDir(t, dir, func() {
@@ -91,6 +97,13 @@ func TestBranchBasedMergeCommandAdvancesBaseAndPrintsStdout(t *testing.T) {
 			t.Fatalf("state = %s", pr.State)
 		}
 	})
+}
+
+func TestMergeResultRenderingRejectsUnknownRecordWithoutPanic(t *testing.T) {
+	cmd := newRootCmd()
+	if err := printMergeRecordSuccess(cmd, unknownRecord{}, "ref", false); err == nil || !strings.Contains(err.Error(), "unknownRecord") {
+		t.Fatalf("render error = %v", err)
+	}
 }
 
 func TestListAndShowRenderMixedShapesWhileLegacyOutputStaysStable(t *testing.T) {

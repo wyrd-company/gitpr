@@ -343,6 +343,21 @@ func (r *Repo) RefreshWorktree(ctx context.Context, path, head string) error {
 	return nil
 }
 
+func (r *Repo) WorktreeDirtyAgainst(ctx context.Context, path, expectedHead string) (bool, error) {
+	if _, err := runGit(ctx, path, "diff", "--quiet", expectedHead, "--"); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return true, nil
+		}
+		return false, err
+	}
+	untracked, err := runGit(ctx, path, "ls-files", "--others", "--exclude-standard")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(untracked) != "", nil
+}
+
 func (r *Repo) CleanupSourceWorktree(ctx context.Context, sourceWorktreePath, sourceBranch string) error {
 	currentWD, err := os.Getwd()
 	if err == nil {
