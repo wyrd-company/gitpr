@@ -106,7 +106,7 @@ func (s *Service) LoadPR(id string) (model.PR, string, error) {
 }
 
 func (s *Service) LoadCommentsPR(id string) (model.PR, string, error) {
-	if err := s.requireLegacySurface(id, "comments on branch-based PRs are not available yet; increment 7 adds this surface"); err != nil {
+	if err := s.requireLegacySurface(id, "branch-based comments use thread records; load the record union instead"); err != nil {
 		return model.PR{}, "", err
 	}
 	return s.store.LoadLegacyPR(id)
@@ -147,7 +147,7 @@ func (s *Service) RefreshPR(ctx context.Context, id string) (model.PR, error) {
 }
 
 func (s *Service) AddComment(id string, comment model.Comment) (model.PR, error) {
-	if err := s.requireLegacySurface(id, "comments on branch-based PRs are not available yet; increment 7 adds this surface"); err != nil {
+	if err := s.requireLegacySurface(id, "branch-based comments use CommentPR2 and thread records"); err != nil {
 		return model.PR{}, err
 	}
 	comment.Comment = strings.TrimSpace(comment.Comment)
@@ -166,7 +166,7 @@ func (s *Service) AddComment(id string, comment model.Comment) (model.PR, error)
 }
 
 func (s *Service) UpdateComment(id string, commentIndex int, comment model.Comment) (model.PR, error) {
-	if err := s.requireLegacySurface(id, "comments on branch-based PRs are not available yet; increment 7 adds this surface"); err != nil {
+	if err := s.requireLegacySurface(id, "branch-based comments are append-only thread comments; legacy index updates do not apply"); err != nil {
 		return model.PR{}, err
 	}
 	comment.Comment = strings.TrimSpace(comment.Comment)

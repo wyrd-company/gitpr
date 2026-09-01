@@ -202,7 +202,18 @@ func (s *Store) savePR2(pr model.PR2, previousState model.PRState, expectedMeta 
 		return "", errors.New("schema-2 PR must have schema: 2")
 	}
 	if pr.State == model.PRStateMerged && baseUpdate == nil {
-		return "", fmt.Errorf("%w for PR %s", ErrMergedStateRequiresMerge, pr.ID)
+		alreadyMerged := false
+		if expectedMeta != "" {
+			if data, err := s.showFileFromRef(expectedMeta, prFileName); err == nil {
+				var previous model.PR2
+				if yaml.Unmarshal(data, &previous) == nil && previous.Schema == 2 && previous.State == model.PRStateMerged {
+					alreadyMerged = true
+				}
+			}
+		}
+		if !alreadyMerged {
+			return "", fmt.Errorf("%w for PR %s", ErrMergedStateRequiresMerge, pr.ID)
+		}
 	}
 	if s.beforeSaveHook != nil {
 		s.beforeSaveHook()

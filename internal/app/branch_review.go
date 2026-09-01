@@ -36,6 +36,7 @@ type ReviewReport struct {
 	InterdiffStyle string             `yaml:"interdiff_style,omitempty"`
 	Interdiff      []InterdiffFile    `yaml:"interdiff,omitempty"`
 	VerdictHint    string             `yaml:"verdict_hint,omitempty"`
+	Threads        []model.Thread     `yaml:"threads,omitempty"`
 }
 
 func (s *Service) ReviewPR(ctx context.Context, id string) (ReviewReport, error) {
@@ -92,6 +93,7 @@ func (s *Service) ReviewPR(ctx context.Context, id string) (ReviewReport, error)
 	if err != nil {
 		return ReviewReport{}, err
 	}
+	report.Threads = remapThreads(ctx, repo, pr.Threads, ExpectedHeads{Source: report.Basis.SourceHeadSHA, Base: report.Basis.BaseHeadSHA})
 	if report.LatestEvent == nil {
 		return report, nil
 	}

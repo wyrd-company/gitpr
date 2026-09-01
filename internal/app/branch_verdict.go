@@ -111,6 +111,7 @@ func (s *Service) appendVerdict(ctx context.Context, id string, heads ExpectedHe
 			predecessor = pr.Events[len(pr.Events)-1].ID
 		}
 		now := time.Now().UTC()
+		pr.Threads = remapThreads(ctx, repo, pr.Threads, heads)
 		pr.Events = append(pr.Events, model.ReviewEvent{
 			ID: ulid.Make().String(), SourceHeadSHA: heads.Source, BaseHeadSHA: heads.Base,
 			MergeBaseSHA: mergeBase, Verdict: verdict, Timestamp: now, PredecessorEventID: predecessor,
