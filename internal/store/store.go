@@ -321,6 +321,22 @@ func (s *Store) DeletePR2(pr model.PR2, expectedMeta string) error {
 	return nil
 }
 
+func (s *Store) DeletePR(pr model.PR, expectedMeta string) error {
+	updates := []refUpdate{{Action: "delete", Ref: s.metaRef(pr.ID), OldOID: expectedMeta}}
+	for _, ref := range []string{s.headRef(pr.ID), s.baseRef(pr.ID), s.indexRef(pr.Status, pr.ID)} {
+		if oid, err := s.resolveRef(ref); err == nil {
+			updates = append(updates, refUpdate{Action: "delete", Ref: ref, OldOID: oid})
+		}
+	}
+	if err := s.batchUpdateRefs(updates); err != nil {
+		if isRefConflict(err) {
+			return fmt.Errorf("%w for PR %s", ErrMetadataConflict, pr.ID)
+		}
+		return err
+	}
+	return nil
+}
+
 func (s *Store) validateEventHistory(pr model.PR2, expectedMeta string) error {
 	seen := make(map[string]struct{}, len(pr.Events))
 	for _, event := range pr.Events {
