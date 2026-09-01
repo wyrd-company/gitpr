@@ -35,6 +35,7 @@ type ReviewReport struct {
 	LatestEvent    *model.ReviewEvent `yaml:"latest_event,omitempty"`
 	InterdiffStyle string             `yaml:"interdiff_style,omitempty"`
 	Interdiff      []InterdiffFile    `yaml:"interdiff,omitempty"`
+	VerdictHint    string             `yaml:"verdict_hint,omitempty"`
 }
 
 func (s *Service) ReviewPR(ctx context.Context, id string) (ReviewReport, error) {
@@ -77,6 +78,7 @@ func (s *Service) ReviewPR(ctx context.Context, id string) (ReviewReport, error)
 	if err != nil {
 		return ReviewReport{}, fmt.Errorf("resolve source branch %q: %w", pr.SourceBranch, err)
 	}
+	report.VerdictHint = fmt.Sprintf("gitpr approve %s --source-head %s --base-head %s", pr.ID, report.Basis.SourceHeadSHA, report.Basis.BaseHeadSHA)
 	report.Basis.MergeBaseSHA, err = repo.MergeBase(ctx, report.Basis.BaseHeadSHA, report.Basis.SourceHeadSHA)
 	if err != nil {
 		return ReviewReport{}, err

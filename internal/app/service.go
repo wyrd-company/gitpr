@@ -215,9 +215,10 @@ func (s *Service) requireLegacySurface(id, unavailable string) error {
 }
 
 func (s *Service) RejectPR(id string) (model.PR, string, error) {
-	if err := s.requireLegacySurface(id, "reject on branch-based PRs is not available yet; increment 4 adds branch-based verdicts"); err != nil {
-		return model.PR{}, "", err
-	}
+	return s.rejectLegacyPR(id)
+}
+
+func (s *Service) rejectLegacyPR(id string) (model.PR, string, error) {
 	pr, ref, err := s.mutatePRRef(id, func(pr *model.PR) error {
 		if pr.Status != model.StatusOpen {
 			return fmt.Errorf("PR %s is already closed", pr.ID)

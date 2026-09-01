@@ -79,6 +79,11 @@ func (r *Repo) HeadSHA(ctx context.Context, ref string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+func (r *Repo) CommitExists(ctx context.Context, oid string) bool {
+	_, err := runGit(ctx, r.WorktreePath, "cat-file", "-e", oid+"^{commit}")
+	return err == nil
+}
+
 func (r *Repo) MergeBase(ctx context.Context, leftRef, rightRef string) (string, error) {
 	out, err := runGit(ctx, r.WorktreePath, "merge-base", leftRef, rightRef)
 	if err != nil {

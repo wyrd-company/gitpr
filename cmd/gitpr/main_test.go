@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -21,7 +22,7 @@ func TestCreateAndReviewCommandsUseSchema2BasisYAML(t *testing.T) {
 		}
 		id := fields[2]
 		reviewOut := executeCLI(t, "review", id)
-		for _, want := range []string{"basis:", "source_head_sha:", "base_head_sha:", "base_contained: true", "sample.txt", "+feature"} {
+		for _, want := range []string{"basis:", "source_head_sha:", "base_head_sha:", "base_contained: true", "sample.txt", "+feature", "verdict_hint: gitpr approve"} {
 			if !strings.Contains(reviewOut, want) {
 				t.Errorf("review output missing %q:\n%s", want, reviewOut)
 			}
@@ -32,6 +33,32 @@ func TestCreateAndReviewCommandsUseSchema2BasisYAML(t *testing.T) {
 		}
 		if _, _, err := st.LoadPR2(id); err != nil {
 			t.Fatalf("created record is not schema 2: %v", err)
+		}
+	})
+}
+
+func TestReviewBasisCanBePastedIntoApproveCommandOnStdout(t *testing.T) {
+	dir := newCLITestRepo(t)
+	withinDir(t, dir, func() {
+		id := strings.Fields(executeCLI(t, "create", "--title", "Verdict flow"))[2]
+		review := executeCLI(t, "review", id)
+		find := func(field string) string {
+			re := regexp.MustCompile(`(?m)^    ` + field + `: ([0-9a-f]{40})$`)
+			match := re.FindStringSubmatch(review)
+			if len(match) != 2 {
+				t.Fatalf("review output missing %s:\n%s", field, review)
+			}
+			return match[1]
+		}
+		source, base := find("source_head_sha"), find("base_head_sha")
+		out := executeCLI(t, "approve", id, "--basis", source+":"+base)
+		if !strings.Contains(out, "Approved PR") {
+			t.Fatalf("approve stdout = %q", out)
+		}
+		st, _ := store.New(dir)
+		pr, _, _ := st.LoadPR2(id)
+		if len(pr.Events) != 1 || pr.Events[0].Verdict != model.VerdictAccepted || pr.Events[0].SourceHeadSHA != source || pr.Events[0].BaseHeadSHA != base {
+			t.Fatalf("approved events = %#v", pr.Events)
 		}
 	})
 }
@@ -98,14 +125,20 @@ func TestMainRoutesCommandDataToStdout(t *testing.T) {
 	}
 }
 
-func TestApproveAliasIsUnavailableUntilVerdictCommandShips(t *testing.T) {
-	root := newRootCmd()
-	var stdout, stderr bytes.Buffer
-	root.SetOut(&stdout)
-	root.SetErr(&stderr)
-	root.SetArgs([]string{"approve", "anything"})
-	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "unknown command") {
-		t.Fatalf("gitpr approve error = %v, stdout=%q stderr=%q", err, stdout.String(), stderr.String())
+func TestVerdictCommandsRejectPartialOrConflictingBasisFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"approve", "anything", "--source-head", "one"},
+		{"reject", "anything", "--base-head", "two"},
+		{"approve", "anything", "--basis", "one:two", "--source-head", "one", "--base-head", "two"},
+	} {
+		root := newRootCmd()
+		var stdout, stderr bytes.Buffer
+		root.SetOut(&stdout)
+		root.SetErr(&stderr)
+		root.SetArgs(args)
+		if err := root.Execute(); err == nil {
+			t.Fatalf("gitpr %v error = nil", args)
+		}
 	}
 }
 

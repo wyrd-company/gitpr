@@ -38,6 +38,7 @@ func newRootCmd() *cobra.Command {
 	rootCmd.AddCommand(newListCmd())
 	rootCmd.AddCommand(newShowCmd())
 	rootCmd.AddCommand(newReviewCmd())
+	rootCmd.AddCommand(newApproveCmd())
 	rootCmd.AddCommand(newCommentsCmd())
 	rootCmd.AddCommand(newCommentCmd())
 	rootCmd.AddCommand(newRefreshCmd())
@@ -206,6 +207,69 @@ func newReviewCmd() *cobra.Command {
 			return nil
 		},
 	}
+	return cmd
+}
+
+type expectedHeadFlags struct {
+	source string
+	base   string
+	basis  string
+}
+
+func (f *expectedHeadFlags) bind(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&f.source, "source-head", "", "Expected source head from gitpr review")
+	cmd.Flags().StringVar(&f.base, "base-head", "", "Expected base head from gitpr review")
+	cmd.Flags().StringVar(&f.basis, "basis", "", "Expected review basis as <source>:<base>")
+}
+
+func (f expectedHeadFlags) parse() (*app.ExpectedHeads, error) {
+	source, base, basis := strings.TrimSpace(f.source), strings.TrimSpace(f.base), strings.TrimSpace(f.basis)
+	if basis == "" && source == "" && base == "" {
+		return nil, nil
+	}
+	if basis == "" && (source == "" || base == "") {
+		return nil, errors.New("both --source-head and --base-head are required; run gitpr review <id> before recording a verdict")
+	}
+	if basis != "" {
+		if source != "" || base != "" {
+			return nil, errors.New("use either --basis or --source-head with --base-head, not both")
+		}
+		parts := strings.Split(basis, ":")
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+			return nil, errors.New("--basis must be <source-head>:<base-head> from gitpr review")
+		}
+		source, base = strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+	}
+	return &app.ExpectedHeads{Source: source, Base: base}, nil
+}
+
+func newApproveCmd() *cobra.Command {
+	var flags expectedHeadFlags
+	cmd := &cobra.Command{
+		Use:   "approve <pr-id>",
+		Short: "Record an accepted review event for a branch-based PR",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			heads, err := flags.parse()
+			if err != nil {
+				return err
+			}
+			if heads == nil {
+				heads = &app.ExpectedHeads{}
+			}
+			svc, err := app.NewService(".")
+			if err != nil {
+				return err
+			}
+			pr, ref, err := svc.ApprovePR(cmd.Context(), args[0], *heads)
+			if err != nil {
+				return err
+			}
+			cmd.Printf("Approved PR %s at %s\n", shortID(pr.ID), ref)
+			return nil
+		},
+	}
+	flags.bind(cmd)
 	return cmd
 }
 
@@ -404,6 +468,7 @@ func newRefreshCmd() *cobra.Command {
 }
 
 func newRejectCmd() *cobra.Command {
+	var flags expectedHeadFlags
 	cmd := &cobra.Command{
 		Use:     "reject <pr-id>",
 		Aliases: []string{"request-changes"},
@@ -415,15 +480,20 @@ func newRejectCmd() *cobra.Command {
 				return err
 			}
 
-			pr, ref, err := svc.RejectPR(args[0])
+			heads, err := flags.parse()
+			if err != nil {
+				return err
+			}
+			record, ref, err := svc.RejectRecord(cmd.Context(), args[0], heads)
 			if err != nil {
 				return err
 			}
 
-			cmd.Printf("Rejected PR %s at %s\n", shortID(pr.ID), ref)
+			cmd.Printf("Rejected PR %s at %s\n", shortID(record.RecordID()), ref)
 			return nil
 		},
 	}
+	flags.bind(cmd)
 
 	return cmd
 }
