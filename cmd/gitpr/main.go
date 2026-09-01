@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -37,6 +38,7 @@ func newRootCmd() *cobra.Command {
 	}
 
 	rootCmd.AddCommand(newCreateCmd())
+	rootCmd.AddCommand(newEditCmd())
 	rootCmd.AddCommand(newListCmd())
 	rootCmd.AddCommand(newShowCmd())
 	rootCmd.AddCommand(newReviewCmd())
@@ -58,6 +60,7 @@ func newRootCmd() *cobra.Command {
 func newCreateCmd() *cobra.Command {
 	var title string
 	var description string
+	var descriptionFile string
 	var worktree string
 	var base string
 
@@ -70,6 +73,11 @@ func newCreateCmd() *cobra.Command {
 				serviceRoot = worktree
 			}
 
+			desc, err := resolveDescription(cmd, description, descriptionFile)
+			if err != nil {
+				return err
+			}
+
 			svc, err := app.NewService(serviceRoot)
 			if err != nil {
 				return err
@@ -77,7 +85,7 @@ func newCreateCmd() *cobra.Command {
 
 			req := app.CreatePRRequest{
 				Title:       title,
-				Description: description,
+				Description: desc,
 				Worktree:    worktree,
 				BaseBranch:  base,
 			}
@@ -93,10 +101,83 @@ func newCreateCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&title, "title", "t", "", "PR title")
-	cmd.Flags().StringVarP(&description, "description", "d", "", "PR description")
+	cmd.Flags().StringVarP(&description, "description", "d", "", "PR description (shell-quoting fragile for multiline/backtick content; prefer --description-file)")
+	cmd.Flags().StringVar(&descriptionFile, "description-file", "", "Read the PR description verbatim from a file, or - for standard input")
 	cmd.Flags().StringVar(&worktree, "worktree", "", "Source worktree path (defaults to current directory)")
 	cmd.Flags().StringVar(&base, "base", "", "Override detected default branch")
 	_ = cmd.MarkFlagRequired("title")
+	cmd.MarkFlagsMutuallyExclusive("description", "description-file")
+
+	return cmd
+}
+
+// resolveDescription returns the description content for create/edit
+// commands. --description-file (or "-" for standard input) is read
+// verbatim, byte-for-byte, with no trimming or shell interpretation.
+// --description is used as passed by cobra. Neither flag set yields "".
+func resolveDescription(cmd *cobra.Command, description, descriptionFile string) (string, error) {
+	if strings.TrimSpace(descriptionFile) == "" {
+		return description, nil
+	}
+	if descriptionFile == "-" {
+		data, err := io.ReadAll(cmd.InOrStdin())
+		if err != nil {
+			return "", fmt.Errorf("reading description from standard input: %w", err)
+		}
+		return string(data), nil
+	}
+	data, err := os.ReadFile(descriptionFile)
+	if err != nil {
+		return "", fmt.Errorf("reading --description-file %q: %w", descriptionFile, err)
+	}
+	return string(data), nil
+}
+
+func newEditCmd() *cobra.Command {
+	var title string
+	var description string
+	var descriptionFile string
+
+	cmd := &cobra.Command{
+		Use:   "edit <pr-id>",
+		Short: "Replace title and/or description on an open branch-based PR",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !cmd.Flags().Changed("title") && !cmd.Flags().Changed("description") && !cmd.Flags().Changed("description-file") {
+				return errors.New("edit requires --title, --description, or --description-file")
+			}
+
+			svc, err := app.NewService(".")
+			if err != nil {
+				return err
+			}
+
+			req := app.EditPRRequest{}
+			if cmd.Flags().Changed("title") {
+				req.Title = &title
+			}
+			if cmd.Flags().Changed("description") || cmd.Flags().Changed("description-file") {
+				desc, err := resolveDescription(cmd, description, descriptionFile)
+				if err != nil {
+					return err
+				}
+				req.Description = &desc
+			}
+
+			pr, ref, err := svc.EditPR(args[0], req)
+			if err != nil {
+				return err
+			}
+
+			cmd.Printf("Edited PR %s at %s\n", shortID(pr.ID), ref)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVarP(&title, "title", "t", "", "New PR title")
+	cmd.Flags().StringVarP(&description, "description", "d", "", "New PR description (shell-quoting fragile for multiline/backtick content; prefer --description-file)")
+	cmd.Flags().StringVar(&descriptionFile, "description-file", "", "Read the new PR description verbatim from a file, or - for standard input")
+	cmd.MarkFlagsMutuallyExclusive("description", "description-file")
 
 	return cmd
 }

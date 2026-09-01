@@ -554,6 +554,7 @@ func idCommandInvocations(t *testing.T, legacyID string) map[string][]string {
 		"resolve":      {"resolve", legacyID, "01THREADIDNOTREACHED000000"},
 		"reopen":       {"reopen", legacyID, "01THREADIDNOTREACHED000000"},
 		"close":        {"close", legacyID, "--reason", "abandoned"},
+		"edit":         {"edit", legacyID, "--title", "refused"},
 		"delete":       {"delete", legacyID, "--force"},
 		"debug export": {"debug", "export", legacyID, "--to", t.TempDir()},
 	}
