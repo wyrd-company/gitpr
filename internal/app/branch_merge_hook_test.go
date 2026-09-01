@@ -52,3 +52,29 @@ func TestMergePR2RefreshFailureReportsCompletedMergeAndRepairCommand(t *testing.
 		t.Fatalf("base = %s", got)
 	}
 }
+
+func TestMergePR2ConcurrentVerdictWinsWithoutBaseAdvance(t *testing.T) {
+	dir, serviceA, pr, event := newAcceptedBranchPR(t)
+	serviceB, err := NewService(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	heads := ExpectedHeads{Source: event.SourceHeadSHA, Base: event.BaseHeadSHA}
+	serviceA.store.SetBeforeSaveHook(func() {
+		serviceA.store.SetBeforeSaveHook(nil)
+		if _, _, err := serviceB.RejectRecord(context.Background(), pr.ID, &heads); err != nil {
+			t.Errorf("concurrent reject: %v", err)
+		}
+	})
+	_, _, err = serviceA.mergeBranchPR(context.Background(), pr.ID, false)
+	if err == nil || !errors.Is(err, store.ErrMergeConflict) {
+		t.Fatalf("concurrent verdict merge error = %v", err)
+	}
+	loaded, _, _ := serviceA.store.LoadPR2(pr.ID)
+	if loaded.State != model.PRStateOpen || len(loaded.Events) != 2 || loaded.Events[1].Verdict != model.VerdictRejected {
+		t.Fatalf("winner record = %#v", loaded)
+	}
+	if got := testGit(t, dir, "rev-parse", "refs/heads/main"); got != event.BaseHeadSHA {
+		t.Fatalf("base advanced to %s", got)
+	}
+}
