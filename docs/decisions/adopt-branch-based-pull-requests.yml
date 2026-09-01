@@ -1,0 +1,69 @@
+$schema: https://refinery.systems/ontology/decision-record
+name: Adopt branch-based pull requests with immutable review events
+
+relationships:
+  - contextualizes:
+      - branch-based-pull-requests
+
+description: >-
+  gitpr models a PR as a single immutable snapshot frozen at review time. The
+  model makes review evidence precise but cannot survive normal branch
+  movement: a mid-review rebase strands the snapshot behind a misleading
+  divergence error, work that integrates by rebase or a later snapshot has no
+  honest closure, the conversation dies with each verdict, and one day of
+  epic-scale use stranded nineteen snapshots and broke the open list as a
+  review queue. Measured cases also require recording an approval without
+  writing the base branch: verification-only review gates, and reviews that
+  conclude while an external process holds a lease on the base ref. A
+  structural decision is needed on what the PR is, before lifecycle,
+  approval, and comment features harden the current shape further.
+
+considered-options:
+  1: >-
+    Keep snapshot-scoped PRs and add verbs around them — re-snapshot or
+    update commands, additional closure statuses, and copy-forward for
+    comments.
+  2: >-
+    Make the PR branch-scoped with one mutable review record that tracks the
+    branch head.
+  3: >-
+    Make the PR branch-scoped with append-only immutable review events, each
+    an accepted or rejected judgment on an exact source-head and base-head
+    pair; separate approval from merge; gate merge on double head equality
+    enforced by compare-and-swap; give the PR final states merged or
+    closed-with-reason.
+
+decision-outcome:
+  chosen-option: 3
+  justification: >-
+    Option 3 keeps the property worth keeping — a verdict is an immutable
+    judgment on exact commits — and discards the property causing the harm:
+    the PR's identity being frozen with it. Option 1 preserves that identity,
+    so every snapshot remains a dead end that strands records and kills
+    conversation; the evidence indicts the identity, not any missing verb.
+    Option 2 destroys the audit trail: a mutable review record cannot say
+    which commits a verdict judged, which violates the contract that nothing
+    merges except what was reviewed. Events also give approval a form with no
+    side effects, which the measured lease-collision and verification-only
+    cases require, and double-equality compare-and-swap merge makes the
+    reviewed-equals-shipped guarantee atomic rather than advisory.
+
+expected-outcomes:
+  positive:
+    - PRs survive rebases and remediation rounds; branch movement is ordinary
+      instead of terminal.
+    - Every verdict remains auditable to the exact commits it judged.
+    - Approval records cleanly under an external base-ref lease and for
+      verification-only gates, with no base mutation.
+    - Closed records carry truthful machine-readable reasons, restoring the
+      open list as a review queue.
+    - Comment threads survive rounds, mark outdated honestly, and accept
+      late responses after closure.
+  negative:
+    - Strict double-equality gating invalidates approvals on every base move,
+      raising re-review frequency; the compensation is interdiff-scoped
+      re-review, not a looser gate.
+    - Two record shapes coexist for the life of the tool, since legacy
+      snapshots stay readable without migration or reinterpretation.
+    - Anchor re-mapping across rebases adds the design's largest
+      implementation complexity.
