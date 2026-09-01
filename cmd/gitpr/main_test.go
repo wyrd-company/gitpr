@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/wyrd-company/gitpr/internal/model"
 	"github.com/wyrd-company/gitpr/internal/store"
 )
@@ -526,4 +528,82 @@ func runShell(t *testing.T, dir, script string) string {
 		t.Fatalf("documented command failed: %s\n%s: %v", script, stderr.String(), err)
 	}
 	return strings.TrimSpace(stdout.String())
+}
+
+// idCommandInvocations names the arguments each registered PR-id command needs
+// to reach its record load. TestEveryRegisteredIDCommandRefusesALegacyRecord
+// asserts this map covers the command tree exactly, so a new id verb cannot be
+// added without deciding how it treats a legacy record.
+func idCommandInvocations(t *testing.T, legacyID string) map[string][]string {
+	t.Helper()
+	const sourceHead = "0123456789abcdef0123456789abcdef01234567"
+	const baseHead = "89abcdef0123456789abcdef0123456789abcdef"
+	return map[string][]string{
+		"show":         {"show", legacyID},
+		"comments":     {"comments", legacyID},
+		"review":       {"review", legacyID},
+		"approve":      {"approve", legacyID, "--basis", sourceHead + ":" + baseHead},
+		"reject":       {"reject", legacyID, "--basis", sourceHead + ":" + baseHead},
+		"merge":        {"merge", legacyID},
+		"comment":      {"comment", legacyID, "--pr-level", "--text", "refused"},
+		"resolve":      {"resolve", legacyID, "01THREADIDNOTREACHED000000"},
+		"reopen":       {"reopen", legacyID, "01THREADIDNOTREACHED000000"},
+		"close":        {"close", legacyID, "--reason", "abandoned"},
+		"delete":       {"delete", legacyID, "--force"},
+		"debug export": {"debug", "export", legacyID, "--to", t.TempDir()},
+	}
+}
+
+func TestEveryRegisteredIDCommandRefusesALegacyRecord(t *testing.T) {
+	dir := newCLITestRepo(t)
+	withinDir(t, dir, func() {
+		legacyID := writeCLILegacyRecord(t, dir, "01LEGACYREGISTRYSWEEP00000")
+		before := cliGit(t, dir, "show", "refs/gitpr/pr/"+legacyID+"/meta:pr.yaml")
+		invocations := idCommandInvocations(t, legacyID)
+
+		registered := map[string]struct{}{}
+		var walk func(cmd *cobra.Command, prefix string)
+		walk = func(cmd *cobra.Command, prefix string) {
+			for _, child := range cmd.Commands() {
+				name := strings.TrimSpace(prefix + " " + child.Name())
+				if strings.Contains(child.Use, "pr-id") {
+					registered[name] = struct{}{}
+				}
+				walk(child, name)
+			}
+		}
+		walk(newRootCmd(), "")
+
+		for name := range registered {
+			if _, covered := invocations[name]; !covered {
+				t.Errorf("command %q takes a PR id but is not exercised against a legacy record", name)
+			}
+		}
+		for name := range invocations {
+			if _, exists := registered[name]; !exists {
+				t.Errorf("invocation %q names no registered PR-id command", name)
+			}
+		}
+
+		for name, args := range invocations {
+			cmd := newRootCmd()
+			cmd.SetArgs(args)
+			cmd.SetOut(new(bytes.Buffer))
+			cmd.SetErr(new(bytes.Buffer))
+			err := cmd.Execute()
+			if err == nil {
+				t.Errorf("gitpr %v succeeded on a legacy record", args)
+				continue
+			}
+			for _, want := range []string{"gitpr create", "update-ref -d", "github.com/wyrd-company/gitpr"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%s refusal %q is missing %q", name, err, want)
+				}
+			}
+		}
+
+		if after := cliGit(t, dir, "show", "refs/gitpr/pr/"+legacyID+"/meta:pr.yaml"); after != before {
+			t.Fatalf("a refused command changed the legacy record\n before: %s\n after: %s", before, after)
+		}
+	})
 }

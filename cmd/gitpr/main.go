@@ -597,7 +597,6 @@ func newDeleteCmd() *cobra.Command {
 }
 
 func newDebugCmd() *cobra.Command {
-	var which string
 	var targetDir string
 
 	cmd := &cobra.Command{
@@ -607,7 +606,7 @@ func newDebugCmd() *cobra.Command {
 
 	exportCmd := &cobra.Command{
 		Use:   "export <pr-id>",
-		Short: "Export a PR ref tree to a local directory",
+		Short: "Export a PR metadata ref tree to a local directory",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if strings.TrimSpace(targetDir) == "" {
@@ -619,16 +618,15 @@ func newDebugCmd() *cobra.Command {
 				return err
 			}
 
-			if err := svc.DebugExport(args[0], which, targetDir); err != nil {
+			if err := svc.DebugExport(args[0], targetDir); err != nil {
 				return err
 			}
 
-			cmd.Printf("Exported %s for PR %s to %s\n", firstNonEmpty(which, "meta"), args[0], targetDir)
+			cmd.Printf("Exported meta for PR %s to %s\n", args[0], targetDir)
 			return nil
 		},
 	}
 
-	exportCmd.Flags().StringVar(&which, "ref", "meta", "Which PR ref to export: meta")
 	exportCmd.Flags().StringVar(&targetDir, "to", "", "Destination directory")
 	cmd.AddCommand(exportCmd)
 
@@ -657,13 +655,4 @@ func shortID(id string) string {
 		return id
 	}
 	return id[:12]
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }

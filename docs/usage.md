@@ -60,9 +60,9 @@ view; actions use the CLI review and basis flow.
 ## Legacy records
 
 A record without a `schema` field is a legacy snapshot from the prior model.
-gitpr does not read, list, mutate, merge, or delete one: every command that
-takes its ID refuses and names this section, and `gitpr list` skips it with a
-count.
+gitpr does not read, list, mutate, merge, export, or delete one: every command
+that takes its ID refuses and carries the commands below, and `gitpr list` skips
+it with a count.
 
 There is no migration. Recreate in-flight work with `gitpr create` and remove
 the old record by hand. A legacy record is self-describing YAML behind plain

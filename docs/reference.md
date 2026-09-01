@@ -22,7 +22,7 @@ order: 4
 | `gitpr show [id]`                | Print the complete record as YAML. Opens a picker without an ID.                                                                                                                                                                                                |
 | `gitpr delete <id>`              | Preview and exit non-zero without `--force`; with it, remove the complete record namespace.                                                                                                                                                                     |
 | `gitpr tui`                      | List records. The detail view is read-only; actions use the CLI.                                                                                                                                                                    |
-| `gitpr debug export <id>`        | Export `--ref meta` to `--to <directory>`.                                                                                                                                                                                         |
+| `gitpr debug export <id>`        | Export the record metadata ref tree to `--to <directory>`.                                                                                                                                                                                         |
 
 ## List filters
 
@@ -43,9 +43,9 @@ order: 4
 - A post-merge refresh or cleanup failure exits non-zero after reporting success
   and a repair command.
 - Close refuses terminal records. Comments remain legal in every state.
-- Every ID verb refuses a legacy (schema-absent) record and names the "Legacy
-  records" section of the usage guide, which carries the raw-git retrieval and
-  removal commands.
+- Every ID verb, `debug export` included, refuses a legacy (schema-absent)
+  record and carries the raw-git read and removal commands inline; the "Legacy
+  records" section of the usage guide carries the full story.
 - Forced deletion removes retention refs and can make reviewed commits
   collectable.
 

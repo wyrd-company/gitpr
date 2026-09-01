@@ -435,10 +435,13 @@ func (s *Store) LoadPR(id string) (model.PR2, string, error) {
 // so this text is the only discovery path for a holder of one.
 func legacyRecordGuidance(id string) string {
 	return fmt.Sprintf(
-		"PR %q predates the branch-based model and gitpr no longer reads it; "+
-			"read it with `git show refs/gitpr/pr/<full-id>/meta:pr.yaml`, "+
-			"recreate the review with `gitpr create`, and remove the record with the commands in "+
-			"the \"Legacy records\" section of the gitpr README and docs/usage.md",
+		"PR %q predates the branch-based model and gitpr no longer reads it. "+
+			"Read it with `git show refs/gitpr/pr/%[1]s/meta:pr.yaml`, "+
+			"recreate the review with `gitpr create`, then remove the record with "+
+			"`git for-each-ref --format='%%(refname)' 'refs/gitpr/pr/%[1]s/*' 'refs/gitpr/index/*/%[1]s' | "+
+			"while read -r ref; do git update-ref -d \"$ref\"; done` (irreversible). "+
+			"The \"Legacy records\" section of docs/usage.md at "+
+			"https://github.com/wyrd-company/gitpr carries the full story.",
 		id,
 	)
 }
@@ -474,20 +477,18 @@ func (s *Store) ListPRs(filter string) ([]model.PR2, int, error) {
 	return prs, skipped, nil
 }
 
-func (s *Store) ExportPR(id, which, targetDir string) error {
+func (s *Store) ExportPR(id, targetDir string) error {
 	resolvedID, err := s.resolvePRID(id)
 	if err != nil {
 		return err
 	}
-
-	switch strings.ToLower(strings.TrimSpace(which)) {
-	case "", "meta":
-	default:
-		return fmt.Errorf("unsupported export ref %q", which)
+	// Export reads the record, so it dispatches on schema like every other
+	// id verb: a legacy or unsupported record is refused, never written out.
+	if _, _, err := s.LoadPR(resolvedID); err != nil {
+		return err
 	}
-	ref := s.metaRef(resolvedID)
 
-	resolvedRef, err := s.resolveRef(ref)
+	resolvedRef, err := s.resolveRef(s.metaRef(resolvedID))
 	if err != nil {
 		return err
 	}

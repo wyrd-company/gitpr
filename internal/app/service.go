@@ -98,8 +98,8 @@ func (s *Service) ListPRs(status string) ([]model.PR2, int, error) {
 
 func (s *Service) LoadRecord(id string) (model.PR2, string, error) { return s.store.LoadPR(id) }
 
-func (s *Service) DebugExport(id, which, targetDir string) error {
-	return s.store.ExportPR(id, which, targetDir)
+func (s *Service) DebugExport(id, targetDir string) error {
+	return s.store.ExportPR(id, targetDir)
 }
 
 func (s *Service) repoContext(ctx context.Context, worktree, baseOverride string) (*gitutil.Repo, string, string, model.Config, error) {

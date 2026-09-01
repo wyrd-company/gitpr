@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
@@ -82,24 +83,53 @@ func TestListPRsSkipsUnreadableRecordsAndCountsThem(t *testing.T) {
 	}
 }
 
-func TestLegacyRecordErrorNamesTheDocumentedRetrievalAndRemovalPath(t *testing.T) {
+func TestLegacyRecordErrorCarriesWorkingRetrievalAndRemovalCommands(t *testing.T) {
 	st, legacyID := newStoreTestLegacyPR(t)
 	_, _, err := st.LoadPR(legacyID)
 	if err == nil {
 		t.Fatal("LoadPR on a legacy record returned no error")
 	}
 	message := err.Error()
-	for _, want := range []string{
-		legacyID,
-		"git show refs/gitpr/pr/<full-id>/meta:pr.yaml",
-		"gitpr create",
-		"Legacy records",
-		"docs/usage.md",
-	} {
+	for _, want := range []string{legacyID, "gitpr create", "Legacy records", "docs/usage.md", "https://github.com/wyrd-company/gitpr"} {
 		if !strings.Contains(message, want) {
 			t.Errorf("legacy error %q is missing %q", message, want)
 		}
 	}
+
+	// The refusal is the whole story for a binary-only install, so its inlined
+	// commands are executed here rather than merely matched.
+	commands := backquotedCommands(t, message)
+	if len(commands) != 3 {
+		t.Fatalf("legacy error carries %d commands, want read, create, and remove: %q", len(commands), message)
+	}
+	if got := runStoreShell(t, st.repo.CommonRoot, commands[0]); !strings.Contains(got, "id: "+legacyID) {
+		t.Fatalf("documented read command output = %q", got)
+	}
+	runStoreShell(t, st.repo.CommonRoot, commands[2])
+	if refs := storeTestGit(t, st.repo.CommonRoot, "for-each-ref", "--format=%(refname)", "refs/gitpr/pr/"+legacyID+"/*", "refs/gitpr/index/*/"+legacyID); refs != "" {
+		t.Fatalf("inlined removal command left refs: %q", refs)
+	}
+}
+
+func backquotedCommands(t *testing.T, message string) []string {
+	t.Helper()
+	parts := strings.Split(message, "`")
+	var commands []string
+	for i := 1; i < len(parts); i += 2 {
+		commands = append(commands, parts[i])
+	}
+	return commands
+}
+
+func runStoreShell(t *testing.T, dir, script string) string {
+	t.Helper()
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("inlined command failed: %s\n%s: %v", script, output, err)
+	}
+	return string(output)
 }
 
 func TestListPRsFiltersServeOneVocabularyAndRefuseLegacySegments(t *testing.T) {

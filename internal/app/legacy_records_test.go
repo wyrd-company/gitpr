@@ -14,8 +14,10 @@ import (
 )
 
 // TestEveryIDVerbRefusesALegacyRecord holds the contract that gitpr neither
-// reads nor mutates a schema-absent record. Every verb that takes a PR id is
-// listed here; a new id verb belongs in this table.
+// reads nor mutates a schema-absent record, at the service boundary. This list
+// is not self-enforcing; the CLI registry test
+// TestEveryRegisteredIDCommandRefusesALegacyRecord derives its verbs from the
+// command tree and is what makes omission impossible.
 func TestEveryIDVerbRefusesALegacyRecord(t *testing.T) {
 	repoPath, service := newBranchService(t)
 	legacyID := writeLegacyRecord(t, repoPath, "01LEGACYVERBREFUSAL0000000")
@@ -51,6 +53,7 @@ func TestEveryIDVerbRefusesALegacyRecord(t *testing.T) {
 		{"reopen", func() error { _, _, err := service.SetThreadStatus(legacyID, "thread", model.ThreadOpen); return err }},
 		{"delete-preview", func() error { _, err := service.DeleteRecordSummary(legacyID); return err }},
 		{"delete", func() error { return service.DeleteRecord(legacyID) }},
+		{"debug-export", func() error { return service.DebugExport(legacyID, t.TempDir()) }},
 	}
 	for _, verb := range verbs {
 		err := verb.call()
