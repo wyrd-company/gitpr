@@ -60,8 +60,9 @@ type prLoadedMsg struct {
 }
 
 type listLoadedMsg struct {
-	prs []model.PR
-	err error
+	prs     []model.PR
+	skipped int
+	err     error
 }
 
 type actionResultMsg struct {
@@ -193,6 +194,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.listCursor = 0
 		}
 		m.errMessage = ""
+		if msg.skipped > 0 {
+			m.infoMessage = fmt.Sprintf("%d branch-based PR(s) are available in CLI show/review; full TUI support arrives in increment 8", msg.skipped)
+		}
 		return m, nil
 
 	case actionResultMsg:
@@ -554,11 +558,17 @@ func (m *Model) renderDetail() string {
 
 func (m *Model) loadOpenPRsCmd() tea.Cmd {
 	return func() tea.Msg {
-		prs, err := m.svc.OpenPRs()
+		records, err := m.svc.OpenPRs()
 		if err != nil {
 			return listLoadedMsg{err: err}
 		}
-		return listLoadedMsg{prs: prs}
+		prs := make([]model.PR, 0, len(records))
+		for _, record := range records {
+			if pr, ok := record.(model.PR); ok {
+				prs = append(prs, pr)
+			}
+		}
+		return listLoadedMsg{prs: prs, skipped: len(records) - len(prs)}
 	}
 }
 

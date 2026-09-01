@@ -12,7 +12,7 @@ import (
 
 type pickerModel struct {
 	title    string
-	prs      []model.PR
+	prs      []model.Record
 	cursor   int
 	width    int
 	height   int
@@ -20,7 +20,7 @@ type pickerModel struct {
 	canceled bool
 }
 
-func SelectPR(title string, prs []model.PR) (string, error) {
+func SelectPR(title string, prs []model.Record) (string, error) {
 	if len(prs) == 0 {
 		return "", nil
 	}
@@ -70,7 +70,7 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			if len(m.prs) > 0 {
-				m.selected = m.prs[m.cursor].ID
+				m.selected = m.prs[m.cursor].RecordID()
 			}
 			return m, tea.Quit
 		}
@@ -94,7 +94,7 @@ func (m pickerModel) View() string {
 			cursor = ">"
 		}
 
-		line := fmt.Sprintf("%s %s  %-10s %-18s %s", cursor, shortID(pr.ID), pr.Status, pr.SourceBranch, pr.Title)
+		line := fmt.Sprintf("%s %s  %-10s", cursor, shortID(pr.RecordID()), pr.RecordDisplayState())
 		if i == m.cursor {
 			line = cursorStyle.Render(line)
 		}

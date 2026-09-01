@@ -87,6 +87,18 @@ func (r *Repo) MergeBase(ctx context.Context, leftRef, rightRef string) (string,
 	return strings.TrimSpace(out), nil
 }
 
+func (r *Repo) IsAncestor(ctx context.Context, ancestor, descendant string) (bool, error) {
+	_, err := runGit(ctx, r.WorktreePath, "merge-base", "--is-ancestor", ancestor, descendant)
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
+}
+
 func (r *Repo) FileContentAtRef(ctx context.Context, ref, path string) (string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {

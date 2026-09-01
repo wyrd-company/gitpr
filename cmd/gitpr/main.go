@@ -19,6 +19,14 @@ import (
 var version = "dev"
 
 func main() {
+	rootCmd := newRootCmd()
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func newRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:     "gitpr",
 		Short:   "Review local git worktree branches as lightweight PRs",
@@ -28,6 +36,7 @@ func main() {
 	rootCmd.AddCommand(newCreateCmd())
 	rootCmd.AddCommand(newListCmd())
 	rootCmd.AddCommand(newShowCmd())
+	rootCmd.AddCommand(newReviewCmd())
 	rootCmd.AddCommand(newCommentsCmd())
 	rootCmd.AddCommand(newCommentCmd())
 	rootCmd.AddCommand(newRefreshCmd())
@@ -36,10 +45,7 @@ func main() {
 	rootCmd.AddCommand(newDebugCmd())
 	rootCmd.AddCommand(newTUICmd())
 
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+	return rootCmd
 }
 
 func newCreateCmd() *cobra.Command {
@@ -74,7 +80,7 @@ func newCreateCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("Created PR %s at %s\n", pr.ID, ref)
+			cmd.Printf("Created PR %s at %s\n", pr.ID, ref)
 			return nil
 		},
 	}
@@ -106,19 +112,20 @@ func newListCmd() *cobra.Command {
 			}
 
 			if len(prs) == 0 {
-				fmt.Println("No PRs found.")
+				cmd.Println("No PRs found.")
 				return nil
 			}
 
-			fmt.Printf("%-14s %-10s %-20s %s\n", "ID", "STATUS", "BRANCH", "TITLE")
+			cmd.Printf("%-14s %-10s %-20s %s\n", "ID", "STATUS", "BRANCH", "TITLE")
 			for _, pr := range prs {
-				fmt.Printf("%-14s %-10s %-20s %s\n", shortID(pr.ID), pr.Status, pr.SourceBranch, pr.Title)
+				branch, title, suffix := recordListFields(pr)
+				cmd.Printf("%-14s %-10s %-20s %s%s\n", shortID(pr.RecordID()), pr.RecordDisplayState(), branch, title, suffix)
 			}
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVar(&status, "status", "open", "Filter by status: open|approved|rejected|closed|all")
+	cmd.Flags().StringVar(&status, "status", "open", "Filter by status: open|approved|rejected|merged|closed|all")
 	return cmd
 }
 
@@ -157,7 +164,7 @@ func newShowCmd() *cobra.Command {
 				}
 			}
 
-			pr, _, err := svc.LoadPR(targetID)
+			pr, _, err := svc.LoadRecord(targetID)
 			if err != nil {
 				return err
 			}
@@ -167,13 +174,52 @@ func newShowCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Print(string(out))
+			cmd.Print(string(out))
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVar(&status, "status", "all", "Filter by status when no PR ID is provided: open|approved|rejected|closed|all")
+	cmd.Flags().StringVar(&status, "status", "all", "Filter by status when no PR ID is provided: open|approved|rejected|merged|closed|all")
 	return cmd
+}
+
+func newReviewCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "review <pr-id>",
+		Short: "Compute the live review basis for a branch-based PR",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := app.NewService(".")
+			if err != nil {
+				return err
+			}
+			report, err := svc.ReviewPR(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			out, err := yaml.Marshal(report)
+			if err != nil {
+				return err
+			}
+			cmd.Print(string(out))
+			return nil
+		},
+	}
+	return cmd
+}
+
+func recordListFields(record model.Record) (branch, title, suffix string) {
+	switch pr := record.(type) {
+	case model.PR:
+		return pr.SourceBranch, pr.Title, ""
+	case model.PR2:
+		if pr.State == model.PRStateClosed && pr.Closure != nil {
+			suffix = " (" + string(pr.Closure.Reason) + ")"
+		}
+		return pr.SourceBranch, pr.Title, suffix
+	default:
+		return "", "", ""
+	}
 }
 
 func newCommentsCmd() *cobra.Command {

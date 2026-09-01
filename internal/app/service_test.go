@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/oklog/ulid/v2"
 
 	"github.com/wyrd-company/gitpr/internal/model"
 )
@@ -256,13 +259,7 @@ func newTestPR(t *testing.T) (*Service, model.PR) {
 		t.Fatalf("NewService() error = %v", err)
 	}
 
-	pr, _, err := svc.CreatePR(context.Background(), CreatePRRequest{
-		Title:    "test PR",
-		Worktree: repoPath,
-	})
-	if err != nil {
-		t.Fatalf("CreatePR() error = %v", err)
-	}
+	pr := createLegacyTestPR(t, svc, repoPath, "test PR")
 	return svc, pr
 }
 
@@ -322,13 +319,7 @@ func newMergeTestPR(t *testing.T) (string, string, *Service, model.PR) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pr, _, err := service.CreatePR(context.Background(), CreatePRRequest{
-		Title:    "Guard reviewed snapshot",
-		Worktree: featurePath,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	pr := createLegacyTestPR(t, service, featurePath, "Guard reviewed snapshot")
 
 	return repoPath, featurePath, service, pr
 }
@@ -356,14 +347,47 @@ func newMergeConflictTestPR(t *testing.T) (string, *Service, model.PR) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pr, _, err := service.CreatePR(context.Background(), CreatePRRequest{
-		Title:    "conflicting changes",
-		Worktree: featurePath,
-	})
+	pr := createLegacyTestPR(t, service, featurePath, "conflicting changes")
+	return repoPath, service, pr
+}
+
+func createLegacyTestPR(t *testing.T, service *Service, worktree, title string) model.PR {
+	t.Helper()
+	ctx := context.Background()
+	repo, branch, base, _, err := service.repoContext(ctx, worktree, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return repoPath, service, pr
+	fileDiffs, err := repo.FileDiffs(ctx, base, branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commits, err := repo.Commits(ctx, base, branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceHead, err := repo.HeadSHA(ctx, branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseHead, err := repo.HeadSHA(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mergeBase, err := repo.MergeBase(ctx, sourceHead, baseHead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conflicts, err := repo.DetectMergeConflicts(ctx, base, sourceHead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	pr := model.PR{ID: ulid.Make().String(), Title: title, SourceBranch: branch, SourceWorktreePath: repo.WorktreePath, RepositoryRoot: repo.CommonRoot, BaseBranch: base, SourceHeadSHA: sourceHead, BaseHeadSHA: baseHead, MergeBaseSHA: mergeBase, FileDiffs: fileDiffs, Commits: commits, MergeConflicts: conflicts, Status: model.StatusOpen, CreatedAt: now, UpdatedAt: now}
+	if _, err := service.store.SavePR(pr, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	return pr
 }
 
 func commentsAtAnchor(comments []model.Comment, filePath string, lineStart, lineEnd int) []model.Comment {

@@ -37,89 +37,64 @@ func NewService(root string) (*Service, error) {
 	return &Service{store: st}, nil
 }
 
-func (s *Service) CreatePR(ctx context.Context, req CreatePRRequest) (model.PR, string, error) {
+func (s *Service) CreatePR(ctx context.Context, req CreatePRRequest) (model.PR2, string, error) {
 	if strings.TrimSpace(req.Title) == "" {
-		return model.PR{}, "", errors.New("title is required")
+		return model.PR2{}, "", errors.New("title is required")
 	}
 
 	repo, branch, baseBranch, cfg, err := s.repoContext(ctx, req.Worktree, req.BaseBranch)
 	if err != nil {
-		return model.PR{}, "", err
+		return model.PR2{}, "", err
 	}
 
 	if branch == baseBranch {
-		return model.PR{}, "", fmt.Errorf("source branch %q matches base branch %q", branch, baseBranch)
+		return model.PR2{}, "", fmt.Errorf("source branch %q matches base branch %q", branch, baseBranch)
 	}
 
-	fileDiffs, err := repo.FileDiffs(ctx, baseBranch, branch)
+	open, err := s.store.ListPRs(string(model.PRStateOpen))
 	if err != nil {
-		return model.PR{}, "", err
+		return model.PR2{}, "", err
 	}
-	if len(fileDiffs) == 0 {
-		return model.PR{}, "", errors.New("no diff detected between source branch and base branch")
-	}
-
-	commits, err := repo.Commits(ctx, baseBranch, branch)
-	if err != nil {
-		return model.PR{}, "", err
-	}
-
-	sourceHeadSHA, err := repo.HeadSHA(ctx, branch)
-	if err != nil {
-		return model.PR{}, "", err
-	}
-	baseHeadSHA, err := repo.HeadSHA(ctx, baseBranch)
-	if err != nil {
-		return model.PR{}, "", err
-	}
-	mergeBaseSHA, err := repo.MergeBase(ctx, sourceHeadSHA, baseHeadSHA)
-	if err != nil {
-		return model.PR{}, "", err
-	}
-
-	conflicts, err := repo.DetectMergeConflicts(ctx, baseBranch, sourceHeadSHA)
-	if err != nil {
-		return model.PR{}, "", err
+	for _, record := range open {
+		pr, ok := record.(model.PR2)
+		if ok && pr.SourceBranch == branch && pr.BaseBranch == baseBranch {
+			return model.PR2{}, "", fmt.Errorf("open branch-based PR %s already tracks %s into %s", pr.ID, branch, baseBranch)
+		}
 	}
 
 	now := time.Now().UTC()
-	pr := model.PR{
+	pr := model.PR2{
+		Schema:             2,
 		ID:                 ulid.Make().String(),
 		Title:              strings.TrimSpace(req.Title),
 		SourceBranch:       branch,
 		SourceWorktreePath: repo.WorktreePath,
 		RepositoryRoot:     repo.CommonRoot,
 		BaseBranch:         baseBranch,
-		SourceHeadSHA:      sourceHeadSHA,
-		BaseHeadSHA:        baseHeadSHA,
-		MergeBaseSHA:       mergeBaseSHA,
 		Description:        strings.TrimSpace(req.Description),
-		FileDiffs:          fileDiffs,
-		Commits:            commits,
-		MergeConflicts:     conflicts,
-		Status:             model.StatusOpen,
+		State:              model.PRStateOpen,
 		CreatedAt:          now,
 		UpdatedAt:          now,
 	}
 
-	ref, err := s.store.SavePR(pr, "", "")
+	ref, err := s.store.SavePR2(pr, "", "")
 	if err != nil {
-		return model.PR{}, "", err
+		return model.PR2{}, "", err
 	}
 
 	cfg.DefaultBranch = baseBranch
 	if err := s.store.SaveConfig(cfg); err != nil {
-		return model.PR{}, "", err
+		return model.PR2{}, "", err
 	}
 
 	return pr, ref, nil
 }
 
-func (s *Service) ListPRs(status string) ([]model.PR, error) {
-	// Temporary legacy-only projection. Increment 6 rewires presentation to the
-	// schema-dispatched record union before schema-2 creation becomes public.
-	return s.store.ListLegacyPRs(status)
+func (s *Service) ListPRs(status string) ([]model.Record, error) {
+	return s.store.ListPRs(status)
 }
+
+func (s *Service) LoadRecord(id string) (model.Record, string, error) { return s.store.LoadPR(id) }
 
 func (s *Service) LoadPR(id string) (model.PR, string, error) {
 	return s.store.LoadLegacyPR(id)
@@ -149,6 +124,9 @@ func (s *Service) RefreshConflicts(ctx context.Context, pr model.PR) (model.PR, 
 }
 
 func (s *Service) AddComment(id string, comment model.Comment) (model.PR, error) {
+	if err := s.requireLegacySurface(id, "comments"); err != nil {
+		return model.PR{}, err
+	}
 	comment.Comment = strings.TrimSpace(comment.Comment)
 	if comment.Comment == "" {
 		return model.PR{}, errors.New("comment text is required")
@@ -165,6 +143,9 @@ func (s *Service) AddComment(id string, comment model.Comment) (model.PR, error)
 }
 
 func (s *Service) UpdateComment(id string, commentIndex int, comment model.Comment) (model.PR, error) {
+	if err := s.requireLegacySurface(id, "comments"); err != nil {
+		return model.PR{}, err
+	}
 	comment.Comment = strings.TrimSpace(comment.Comment)
 	if comment.Comment == "" {
 		return model.PR{}, errors.New("comment text is required")
@@ -197,6 +178,17 @@ func (s *Service) UpdateComment(id string, commentIndex int, comment model.Comme
 		pr.UpdatedAt = time.Now().UTC()
 		return nil
 	})
+}
+
+func (s *Service) requireLegacySurface(id, surface string) error {
+	record, _, err := s.store.LoadPR(id)
+	if err != nil {
+		return err
+	}
+	if _, branchBased := record.(model.PR2); branchBased {
+		return fmt.Errorf("%s on branch-based PRs are not available yet; increment 7 adds this surface", surface)
+	}
+	return nil
 }
 
 func (s *Service) RejectPR(id string) (model.PR, string, error) {
@@ -353,14 +345,14 @@ func (s *Service) mutatePRRef(id string, mutate func(*model.PR) error) (model.PR
 	return model.PR{}, "", fmt.Errorf("%w after %d attempts; retry the command", store.ErrMetadataConflict, metadataMutationAttempts)
 }
 
-func (s *Service) OpenPRs() ([]model.PR, error) {
-	prs, err := s.store.ListLegacyPRs(string(model.StatusOpen))
+func (s *Service) OpenPRs() ([]model.Record, error) {
+	prs, err := s.store.ListPRs(string(model.StatusOpen))
 	if err != nil {
 		return nil, err
 	}
 
 	sort.Slice(prs, func(i, j int) bool {
-		return prs[i].ID < prs[j].ID
+		return prs[i].RecordID() < prs[j].RecordID()
 	})
 	return prs, nil
 }
