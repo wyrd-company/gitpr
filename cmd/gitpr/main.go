@@ -240,7 +240,11 @@ func (f expectedHeadFlags) parse() (*app.ExpectedHeads, error) {
 		}
 		source, base = strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
 	}
-	return &app.ExpectedHeads{Source: source, Base: base}, nil
+	heads := &app.ExpectedHeads{Source: source, Base: base}
+	if err := heads.Validate(); err != nil {
+		return nil, err
+	}
+	return heads, nil
 }
 
 func newApproveCmd() *cobra.Command {

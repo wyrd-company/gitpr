@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/wyrd-company/gitpr/internal/model"
+	"github.com/wyrd-company/gitpr/internal/store"
 )
 
 func TestApprovePRAppendsExactEventsPinsAndReleasesMatchingAnchors(t *testing.T) {
@@ -130,6 +132,50 @@ func TestRejectPR2RefusesUnresolvableExpectedCommit(t *testing.T) {
 	}
 }
 
+func TestRejectPR2RefusesBranchNamesBeforeRefWrite(t *testing.T) {
+	dir, service := newBranchService(t)
+	pr, _, _ := service.CreatePR(context.Background(), CreatePRRequest{Title: "Object IDs", Worktree: dir})
+	before := testGit(t, dir, "for-each-ref", "--format=%(refname) %(objectname)")
+	heads := ExpectedHeads{Source: "feature", Base: "main"}
+	if _, _, err := service.RejectRecord(context.Background(), pr.ID, &heads); err == nil || !strings.Contains(err.Error(), "40-character lowercase hexadecimal") || !strings.Contains(err.Error(), "paste the basis") {
+		t.Fatalf("reject branch-name error = %v", err)
+	}
+	after := testGit(t, dir, "for-each-ref", "--format=%(refname) %(objectname)")
+	if after != before {
+		t.Fatalf("invalid expected heads mutated refs\nbefore: %s\nafter: %s", before, after)
+	}
+}
+
+func TestBranchVerdictsRefuseShortAndRevisionExpectedHeadsBeforeRefWrite(t *testing.T) {
+	invalid := []ExpectedHeads{
+		{Source: "feature", Base: "main"},
+		{Source: strings.Repeat("a", 12), Base: strings.Repeat("b", 12)},
+		{Source: "HEAD~1", Base: "main~1"},
+	}
+	for _, verdict := range []string{"approve", "reject"} {
+		for _, heads := range invalid {
+			t.Run(verdict+"/"+heads.Source, func(t *testing.T) {
+				dir, service := newBranchService(t)
+				pr, _, _ := service.CreatePR(context.Background(), CreatePRRequest{Title: "Canonical heads", Worktree: dir})
+				before := testGit(t, dir, "for-each-ref", "--format=%(refname) %(objectname)")
+				var err error
+				if verdict == "approve" {
+					_, _, err = service.ApprovePR(context.Background(), pr.ID, heads)
+				} else {
+					_, _, err = service.RejectRecord(context.Background(), pr.ID, &heads)
+				}
+				if err == nil || !strings.Contains(err.Error(), "paste the basis") {
+					t.Fatalf("%s heads %#v error = %v", verdict, heads, err)
+				}
+				after := testGit(t, dir, "for-each-ref", "--format=%(refname) %(objectname)")
+				if after != before {
+					t.Fatalf("invalid heads mutated refs\nbefore: %s\nafter: %s", before, after)
+				}
+			})
+		}
+	}
+}
+
 func TestBranchVerdictsRequireCompleteReviewedPair(t *testing.T) {
 	dir, service := newBranchService(t)
 	pr, _, _ := service.CreatePR(context.Background(), CreatePRRequest{Title: "Pair", Worktree: dir})
@@ -187,5 +233,35 @@ func TestRejectRecordPreservesLegacyRejectBehaviorWithoutReviewedHeads(t *testin
 	got, ok := record.(model.PR)
 	if !ok || got.Status != model.StatusRejected {
 		t.Fatalf("legacy rejected record = %#v", record)
+	}
+}
+
+func TestRejectRecordRefusesExpectedHeadFlagsForLegacyRecord(t *testing.T) {
+	service, legacy := newTestPR(t)
+	heads := ExpectedHeads{Source: legacy.SourceHeadSHA, Base: legacy.BaseHeadSHA}
+	if _, _, err := service.RejectRecord(context.Background(), legacy.ID, &heads); err == nil || !strings.Contains(err.Error(), "branch-based") || !strings.Contains(err.Error(), "legacy") {
+		t.Fatalf("legacy reject with flags error = %v", err)
+	}
+}
+
+func TestRejectPRSchema2UsesMandatoryPairGuidance(t *testing.T) {
+	dir, service := newBranchService(t)
+	pr, _, _ := service.CreatePR(context.Background(), CreatePRRequest{Title: "TUI reject", Worktree: dir})
+	if _, _, err := service.RejectPR(pr.ID); err == nil || errors.Is(err, store.ErrRecordSchema) || !strings.Contains(err.Error(), "gitpr review") {
+		t.Fatalf("RejectPR schema-2 error = %v", err)
+	}
+}
+
+func TestVerdictEventTimestampEqualsRecordUpdateTimestamp(t *testing.T) {
+	dir, service := newBranchService(t)
+	pr, _, _ := service.CreatePR(context.Background(), CreatePRRequest{Title: "Timestamp", Worktree: dir})
+	report, _ := service.ReviewPR(context.Background(), pr.ID)
+	heads := ExpectedHeads{Source: report.Basis.SourceHeadSHA, Base: report.Basis.BaseHeadSHA}
+	updated, _, err := service.ApprovePR(context.Background(), pr.ID, heads)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Events) != 1 || !updated.Events[0].Timestamp.Equal(updated.UpdatedAt) {
+		t.Fatalf("event timestamp %s != updated_at %s", updated.Events[0].Timestamp, updated.UpdatedAt)
 	}
 }

@@ -215,7 +215,15 @@ func (s *Service) requireLegacySurface(id, unavailable string) error {
 }
 
 func (s *Service) RejectPR(id string) (model.PR, string, error) {
-	return s.rejectLegacyPR(id)
+	record, ref, err := s.RejectRecord(context.Background(), id, nil)
+	if err != nil {
+		return model.PR{}, "", err
+	}
+	pr, ok := record.(model.PR)
+	if !ok {
+		return model.PR{}, "", errors.New("branch-based reject requires the expected heads from gitpr review")
+	}
+	return pr, ref, nil
 }
 
 func (s *Service) rejectLegacyPR(id string) (model.PR, string, error) {

@@ -19,11 +19,26 @@ type ExpectedHeads struct {
 	Base   string
 }
 
-func (h ExpectedHeads) validate() error {
+func (h ExpectedHeads) Validate() error {
 	if strings.TrimSpace(h.Source) == "" || strings.TrimSpace(h.Base) == "" {
 		return errors.New("source and base heads are required; run gitpr review <id>, then pass its basis with --source-head and --base-head or --basis")
 	}
+	if !isFullObjectID(h.Source) || !isFullObjectID(h.Base) {
+		return errors.New("source and base heads must be full 40-character lowercase hexadecimal object IDs; paste the basis from gitpr review <id>")
+	}
 	return nil
+}
+
+func isFullObjectID(value string) bool {
+	if len(value) != 40 {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) ApprovePR(ctx context.Context, id string, heads ExpectedHeads) (model.PR2, string, error) {
@@ -34,7 +49,7 @@ func (s *Service) ApprovePR(ctx context.Context, id string, heads ExpectedHeads)
 	if _, legacy := record.(model.PR); legacy {
 		return model.PR2{}, "", errors.New("approve is available only for branch-based PRs; legacy PRs use merge to record their approved snapshot")
 	}
-	if err := heads.validate(); err != nil {
+	if err := heads.Validate(); err != nil {
 		return model.PR2{}, "", err
 	}
 	return s.appendVerdict(ctx, id, heads, model.VerdictAccepted, true)
@@ -46,18 +61,21 @@ func (s *Service) RejectRecord(ctx context.Context, id string, heads *ExpectedHe
 		return nil, "", err
 	}
 	if _, legacy := record.(model.PR); legacy {
+		if heads != nil {
+			return nil, "", errors.New("expected-head flags apply only to branch-based PRs; legacy reject uses its stored snapshot")
+		}
 		pr, ref, err := s.rejectLegacyPR(id)
 		return pr, ref, err
 	}
 	if heads == nil {
-		return nil, "", ExpectedHeads{}.validate()
+		return nil, "", ExpectedHeads{}.Validate()
 	}
 	pr, ref, err := s.appendVerdict(ctx, id, *heads, model.VerdictRejected, false)
 	return pr, ref, err
 }
 
 func (s *Service) appendVerdict(ctx context.Context, id string, heads ExpectedHeads, verdict model.ReviewVerdict, checkLive bool) (model.PR2, string, error) {
-	if err := heads.validate(); err != nil {
+	if err := heads.Validate(); err != nil {
 		return model.PR2{}, "", err
 	}
 	for attempt := 0; attempt < metadataMutationAttempts; attempt++ {
@@ -92,11 +110,12 @@ func (s *Service) appendVerdict(ctx context.Context, id string, heads ExpectedHe
 		if len(pr.Events) > 0 {
 			predecessor = pr.Events[len(pr.Events)-1].ID
 		}
+		now := time.Now().UTC()
 		pr.Events = append(pr.Events, model.ReviewEvent{
 			ID: ulid.Make().String(), SourceHeadSHA: heads.Source, BaseHeadSHA: heads.Base,
-			MergeBaseSHA: mergeBase, Verdict: verdict, Timestamp: time.Now().UTC(), PredecessorEventID: predecessor,
+			MergeBaseSHA: mergeBase, Verdict: verdict, Timestamp: now, PredecessorEventID: predecessor,
 		})
-		pr.UpdatedAt = time.Now().UTC()
+		pr.UpdatedAt = now
 		ref, err := s.store.SavePR2(pr, pr.State, version)
 		if err == nil {
 			return pr, ref, nil
