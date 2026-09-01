@@ -388,15 +388,11 @@ func (s *Store) resolveRef(ref string) (string, error) {
 }
 
 func (s *Store) resolveRefForLoad(ref string) (string, bool, error) {
-	_, err := runGit(context.Background(), s.repo.CommonRoot, "show-ref", "--verify", "--quiet", ref)
+	out, err := runGit(context.Background(), s.repo.CommonRoot, "rev-parse", "--verify", "--quiet", ref)
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
 		return "", false, nil
 	}
-	if err != nil {
-		return "", false, err
-	}
-	out, err := runGit(context.Background(), s.repo.CommonRoot, "rev-parse", "--verify", ref)
 	if err != nil {
 		return "", false, err
 	}
