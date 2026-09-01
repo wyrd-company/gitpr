@@ -19,6 +19,25 @@ gitpr approve <pr-id> --basis <source-head>:<base-head>
 gitpr merge <pr-id>
 ```
 
+`--description` passes its value through the invoking shell, so backticks,
+`$()`, and mixed quoting in a multiline body can be consumed or mangled by the
+shell before gitpr sees them. Use `--description-file <path>` (or `-` for
+standard input) instead; it is read verbatim, byte-for-byte, with no shell
+interpretation or trimming, and is mutually exclusive with `--description`:
+
+```bash
+gitpr create --title "Improve validation" --description-file description.txt
+```
+
+To correct title or description on an open PR without creating a second
+record — for example after a shell-mangled description — use `gitpr edit`.
+It refuses closed or merged PRs without writing, and never changes anything
+but the fields given:
+
+```bash
+gitpr edit <pr-id> --description-file description.txt
+```
+
 Approve records an accepted event and does not merge. Merge reads the latest
 event and refuses rejected verdicts, head drift, deleted source branches,
 divergent histories, and equal source/base heads. Reject records a rejected

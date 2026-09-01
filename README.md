@@ -85,6 +85,36 @@ gitpr create --worktree /path/to/worktree --base main --title "Improve validatio
 gitpr review <pr-id>
 ```
 
+### Shell-safe descriptions
+
+`--description` passes its value through the invoking shell. Backticks,
+`$()`, and mixed quoting in a multiline body are shell command-substitution
+and quoting syntax, not gitpr syntax — the shell can consume or mangle the
+text before gitpr ever sees it. For any description with backticks, `$()`,
+quotes, or multiple lines, write the body to a file and pass it with
+`--description-file` instead. The flag reads the file (or standard input,
+with `-`) verbatim: no shell interpretation, no trimming.
+
+```bash
+gitpr create --title "Improve validation" --description-file description.txt
+cat description.txt | gitpr create --title "Improve validation" --description-file -
+```
+
+`--description` and `--description-file` are mutually exclusive.
+
+To correct the title or description on an already-created open PR — for
+example after a shell-mangled `--description` produced an empty or corrupted
+body — use `gitpr edit` instead of creating a second record:
+
+```bash
+gitpr edit <pr-id> --description-file description.txt
+gitpr edit <pr-id> --title "Corrected title"
+```
+
+`edit` only accepts open PRs; it refuses closed or merged records without
+writing anything, and it never changes source/base heads, state, or any
+other metadata.
+
 Only one open PR can track a source/base pair. The review YAML
 contains a machine-readable `basis`, the live diff and base containment,
 projected thread state, the latest event, and an interdiff when a prior event
