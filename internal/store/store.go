@@ -10,8 +10,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -44,6 +46,8 @@ var ErrInvalidEventObjectID = errors.New("review event has an invalid object ID"
 var ErrOpenPairConflict = errors.New("an open branch-based PR already tracks this branch pair")
 var ErrMergeConflict = errors.New("branch-based merge transaction conflicted")
 var ErrMergedStateRequiresMerge = errors.New("merged state requires the atomic branch merge operation")
+var ErrTerminalStateTransition = errors.New("terminal branch-based PR state cannot transition")
+var ErrTerminalProvenanceMutation = errors.New("terminal branch-based PR provenance is immutable")
 
 func New(root string) (*Store, error) {
 	repo, err := gitutil.Open(root)
@@ -201,17 +205,33 @@ func (s *Store) savePR2(pr model.PR2, previousState model.PRState, expectedMeta 
 	if pr.Schema != 2 {
 		return "", errors.New("schema-2 PR must have schema: 2")
 	}
-	if pr.State == model.PRStateMerged && baseUpdate == nil {
-		alreadyMerged := false
-		if expectedMeta != "" {
-			if data, err := s.showFileFromRef(expectedMeta, prFileName); err == nil {
-				var previous model.PR2
-				if yaml.Unmarshal(data, &previous) == nil && previous.Schema == 2 && previous.State == model.PRStateMerged {
-					alreadyMerged = true
-				}
-			}
+	var previous *model.PR2
+	if expectedMeta != "" {
+		data, err := s.showFileFromRef(expectedMeta, prFileName)
+		if err != nil {
+			return "", err
 		}
-		if !alreadyMerged {
+		var loaded model.PR2
+		if yaml.Unmarshal(data, &loaded) == nil && loaded.Schema == 2 {
+			previous = &loaded
+			previousState = loaded.State
+		}
+	}
+	if previous != nil {
+		if isTerminalState(previous.State) && pr.State != previous.State {
+			return "", fmt.Errorf("%w: PR %s is %s and cannot become %s", ErrTerminalStateTransition, pr.ID, previous.State, pr.State)
+		}
+		if previous.State == model.PRStateMerged && pr.State == model.PRStateMerged &&
+			(!equalTimePtr(previous.MergedAt, pr.MergedAt) || previous.MergedEventID != pr.MergedEventID || !reflect.DeepEqual(previous.Closure, pr.Closure)) {
+			return "", fmt.Errorf("%w for merged PR %s", ErrTerminalProvenanceMutation, pr.ID)
+		}
+		if previous.State == model.PRStateClosed && pr.State == model.PRStateClosed &&
+			(!equalTimePtr(previous.ClosedAt, pr.ClosedAt) || !reflect.DeepEqual(previous.Closure, pr.Closure)) {
+			return "", fmt.Errorf("%w for closed PR %s", ErrTerminalProvenanceMutation, pr.ID)
+		}
+	}
+	if pr.State == model.PRStateMerged && baseUpdate == nil {
+		if previous == nil || previous.State != model.PRStateMerged {
 			return "", fmt.Errorf("%w for PR %s", ErrMergedStateRequiresMerge, pr.ID)
 		}
 	}
@@ -301,6 +321,17 @@ func (s *Store) savePR2(pr model.PR2, previousState model.PRState, expectedMeta 
 		return "", err
 	}
 	return metaRef, nil
+}
+
+func isTerminalState(state model.PRState) bool {
+	return state == model.PRStateMerged || state == model.PRStateClosed
+}
+
+func equalTimePtr(left, right *time.Time) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return left.Equal(*right)
 }
 
 func (s *Store) DeletePR2(pr model.PR2, expectedMeta string) error {

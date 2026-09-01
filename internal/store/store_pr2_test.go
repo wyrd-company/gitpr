@@ -232,12 +232,83 @@ func TestMergePR2DerivesPreviousStateFromExpectedMetadata(t *testing.T) {
 	now := time.Now().UTC()
 	merging.MergedAt = &now
 	merging.MergedEventID = merging.Events[0].ID
+	if _, err := st.MergePR2(merging, version); !errors.Is(err, ErrTerminalStateTransition) {
+		t.Fatalf("MergePR2 terminal transition error = %v", err)
+	}
+	meta, _ := st.resolveRef(st.metaRef(pr.ID))
+	assertRef(t, st, st.indexRef2(model.PRStateClosed, pr.ID), meta)
+	assertMissingRef(t, st, st.indexRef2(model.PRStateMerged, pr.ID))
+}
+
+func TestSavePR2RejectsTerminalTransitionsAndProvenanceMutation(t *testing.T) {
+	st, base, head := newStoreTestHistory(t)
+	storeTestGit(t, st.repo.CommonRoot, "update-ref", "refs/heads/main", base)
+	pr := completePR2(st.repo.CommonRoot, base, head)
+	if _, err := st.SavePR2(pr, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	merging, version, _ := st.LoadPR2(pr.ID)
+	merging.State = model.PRStateMerged
+	now := time.Now().UTC()
+	merging.MergedAt = &now
+	merging.MergedEventID = merging.Events[0].ID
 	if _, err := st.MergePR2(merging, version); err != nil {
 		t.Fatal(err)
 	}
-	assertMissingRef(t, st, st.indexRef2(model.PRStateClosed, pr.ID))
-	meta, _ := st.resolveRef(st.metaRef(pr.ID))
-	assertRef(t, st, st.indexRef2(model.PRStateMerged, pr.ID), meta)
+
+	for _, state := range []model.PRState{model.PRStateOpen, model.PRStateClosed} {
+		mutated, current, _ := st.LoadPR2(pr.ID)
+		mutated.State = state
+		if _, err := st.SavePR2(mutated, model.PRStateMerged, current); !errors.Is(err, ErrTerminalStateTransition) {
+			t.Fatalf("merged -> %s error=%v", state, err)
+		}
+	}
+	mutations := []func(*model.PR2){
+		func(value *model.PR2) { changed := value.MergedAt.Add(time.Second); value.MergedAt = &changed },
+		func(value *model.PR2) { value.MergedEventID = "01DIFFERENTEVENT00000000000" },
+		func(value *model.PR2) { value.Closure = &model.Closure{Reason: model.ClosureIntegrated} },
+	}
+	for i, mutate := range mutations {
+		mutated, current, _ := st.LoadPR2(pr.ID)
+		mutate(&mutated)
+		if _, err := st.SavePR2(mutated, model.PRStateMerged, current); !errors.Is(err, ErrTerminalProvenanceMutation) {
+			t.Fatalf("merged provenance mutation %d error=%v", i, err)
+		}
+	}
+	commented, current, _ := st.LoadPR2(pr.ID)
+	commented.Threads = append(commented.Threads, model.Thread{ID: "01POSTMERGETHREAD000000000", Kind: model.ThreadPRLevel, Status: model.ThreadOpen})
+	commented.UpdatedAt = now.Add(time.Minute)
+	if _, err := st.SavePR2(commented, model.PRStateMerged, current); err != nil {
+		t.Fatalf("post-merge thread write: %v", err)
+	}
+}
+
+func TestSavePR2ProtectsClosedStateAndClosureEvidence(t *testing.T) {
+	st, base, head := newStoreTestHistory(t)
+	pr := completePR2(st.repo.CommonRoot, base, head)
+	if _, err := st.SavePR2(pr, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	closed, version, _ := st.LoadPR2(pr.ID)
+	now := time.Now().UTC()
+	closed.State, closed.ClosedAt, closed.Closure = model.PRStateClosed, &now, &model.Closure{Reason: model.ClosureAbandoned, Note: "kept"}
+	if _, err := st.SavePR2(closed, model.PRStateOpen, version); err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []model.PRState{model.PRStateOpen, model.PRStateMerged} {
+		mutated, current, _ := st.LoadPR2(pr.ID)
+		mutated.State = state
+		if _, err := st.SavePR2(mutated, model.PRStateClosed, current); !errors.Is(err, ErrTerminalStateTransition) {
+			t.Fatalf("closed -> %s error=%v", state, err)
+		}
+	}
+	for i, mutate := range []func(*model.PR2){func(value *model.PR2) { changed := value.ClosedAt.Add(time.Second); value.ClosedAt = &changed }, func(value *model.PR2) { value.Closure.Note = "changed" }} {
+		mutated, current, _ := st.LoadPR2(pr.ID)
+		mutate(&mutated)
+		if _, err := st.SavePR2(mutated, model.PRStateClosed, current); !errors.Is(err, ErrTerminalProvenanceMutation) {
+			t.Fatalf("closed provenance mutation %d error=%v", i, err)
+		}
+	}
 }
 
 func TestLoadPRDispatchesAbsentSchemaToLegacyAndSchema2ToPR2(t *testing.T) {
