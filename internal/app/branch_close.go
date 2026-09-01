@@ -19,6 +19,13 @@ type ClosePRRequest struct {
 	Note         string
 }
 
+type DeleteSummary struct {
+	ID          string
+	State       string
+	EventCount  int
+	ThreadCount int
+}
+
 func (s *Service) ClosePR(id string, req ClosePRRequest) (model.PR2, string, error) {
 	record, _, err := s.store.LoadPR(id)
 	if err != nil {
@@ -27,7 +34,7 @@ func (s *Service) ClosePR(id string, req ClosePRRequest) (model.PR2, string, err
 	if _, legacy := record.(model.PR); legacy {
 		return model.PR2{}, "", errors.New("close is available only for branch-based PRs; legacy records retain their historical status workflow")
 	}
-	closure, err := s.validateClosure(req)
+	closure, err := s.validateClosure(id, req)
 	if err != nil {
 		return model.PR2{}, "", err
 	}
@@ -55,10 +62,13 @@ func (s *Service) ClosePR(id string, req ClosePRRequest) (model.PR2, string, err
 	return model.PR2{}, "", fmt.Errorf("%w after %d attempts; retry close", store.ErrMetadataConflict, metadataMutationAttempts)
 }
 
-func (s *Service) validateClosure(req ClosePRRequest) (*model.Closure, error) {
+func (s *Service) validateClosure(id string, req ClosePRRequest) (*model.Closure, error) {
 	closure := &model.Closure{Reason: req.Reason, Note: strings.TrimSpace(req.Note)}
 	switch req.Reason {
 	case model.ClosureIntegrated:
+		if req.SupersededBy != "" {
+			return nil, errors.New("--superseded-by does not apply to --reason integrated")
+		}
 		closure.DestinationBranch = strings.TrimSpace(req.Destination)
 		if closure.DestinationBranch == "" {
 			return nil, errors.New("integrated closure requires --destination")
@@ -79,18 +89,57 @@ func (s *Service) validateClosure(req ClosePRRequest) (*model.Closure, error) {
 		}
 		closure.PatchEquivalentIdentities = append([]string(nil), req.PatchIDs...)
 	case model.ClosureSuperseded:
+		if req.Destination != "" {
+			return nil, errors.New("--destination does not apply to --reason superseded")
+		}
+		if len(req.Commits) > 0 {
+			return nil, errors.New("--commit does not apply to --reason superseded")
+		}
+		if len(req.PatchIDs) > 0 {
+			return nil, errors.New("--patch-id does not apply to --reason superseded")
+		}
 		closure.ReplacingPRID = strings.TrimSpace(req.SupersededBy)
 		if closure.ReplacingPRID == "" {
 			return nil, errors.New("superseded closure requires --superseded-by")
+		}
+		if closure.ReplacingPRID == id {
+			return nil, errors.New("--superseded-by cannot name the PR being closed for --reason superseded")
 		}
 		if _, _, err := s.store.LoadPR2(closure.ReplacingPRID); err != nil {
 			return nil, fmt.Errorf("--superseded-by must name an existing branch-based PR: %w", err)
 		}
 	case model.ClosureAbandoned:
+		if req.Destination != "" {
+			return nil, errors.New("--destination does not apply to --reason abandoned")
+		}
+		if len(req.Commits) > 0 {
+			return nil, errors.New("--commit does not apply to --reason abandoned")
+		}
+		if len(req.PatchIDs) > 0 {
+			return nil, errors.New("--patch-id does not apply to --reason abandoned")
+		}
+		if req.SupersededBy != "" {
+			return nil, errors.New("--superseded-by does not apply to --reason abandoned")
+		}
 	default:
 		return nil, errors.New("--reason must be integrated, superseded, or abandoned")
 	}
 	return closure, nil
+}
+
+func (s *Service) DeleteRecordSummary(id string) (DeleteSummary, error) {
+	record, _, err := s.store.LoadPR(id)
+	if err != nil {
+		return DeleteSummary{}, err
+	}
+	summary := DeleteSummary{ID: record.RecordID(), State: record.RecordDisplayState()}
+	if pr, ok := record.(model.PR2); ok {
+		summary.EventCount = len(pr.Events)
+		summary.ThreadCount = len(pr.Threads)
+	} else if pr, ok := record.(model.PR); ok {
+		summary.ThreadCount = len(pr.Comments)
+	}
+	return summary, nil
 }
 
 func (s *Service) ListPRsWithReason(state string, reason model.ClosureReason) ([]model.Record, error) {

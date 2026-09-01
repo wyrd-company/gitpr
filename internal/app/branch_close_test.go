@@ -70,6 +70,37 @@ func TestClosePRRefusesInvalidEvidenceBeforeMutation(t *testing.T) {
 	}
 }
 
+func TestClosePRRefusesSelfSupersessionAndInapplicableEvidence(t *testing.T) {
+	dir, service := newBranchService(t)
+	pr, _, _ := service.CreatePR(context.Background(), CreatePRRequest{Title: "Invalid evidence", Worktree: dir})
+	replacement := model.PR2{Schema: 2, ID: "01OTHERREPLACEMENT000000000", Title: "Other", SourceBranch: "other", BaseBranch: "main", RepositoryRoot: dir, State: model.PRStateOpen}
+	if _, err := service.store.SavePR2(replacement, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		req  ClosePRRequest
+		flag string
+	}{
+		{"self supersession", ClosePRRequest{Reason: model.ClosureSuperseded, SupersededBy: pr.ID}, "--superseded-by"},
+		{"integrated superseded-by", ClosePRRequest{Reason: model.ClosureIntegrated, Destination: "main", PatchIDs: []string{"patch"}, SupersededBy: replacement.ID}, "--superseded-by"},
+		{"superseded destination", ClosePRRequest{Reason: model.ClosureSuperseded, SupersededBy: replacement.ID, Destination: "main"}, "--destination"},
+		{"superseded commit", ClosePRRequest{Reason: model.ClosureSuperseded, SupersededBy: replacement.ID, Commits: []string{strings.Repeat("a", 40)}}, "--commit"},
+		{"superseded patch", ClosePRRequest{Reason: model.ClosureSuperseded, SupersededBy: replacement.ID, PatchIDs: []string{"patch"}}, "--patch-id"},
+		{"abandoned destination", ClosePRRequest{Reason: model.ClosureAbandoned, Destination: "main"}, "--destination"},
+		{"abandoned commit", ClosePRRequest{Reason: model.ClosureAbandoned, Commits: []string{strings.Repeat("a", 40)}}, "--commit"},
+		{"abandoned patch", ClosePRRequest{Reason: model.ClosureAbandoned, PatchIDs: []string{"patch"}}, "--patch-id"},
+		{"abandoned superseded-by", ClosePRRequest{Reason: model.ClosureAbandoned, SupersededBy: replacement.ID}, "--superseded-by"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, _, err := service.ClosePR(pr.ID, tc.req); err == nil || !strings.Contains(err.Error(), tc.flag) || !strings.Contains(err.Error(), string(tc.req.Reason)) {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
 func TestClosePRRefusesLegacyAndTerminalRecords(t *testing.T) {
 	legacyService, legacy := newTestPR(t)
 	if _, _, err := legacyService.ClosePR(legacy.ID, ClosePRRequest{Reason: model.ClosureAbandoned}); err == nil || !strings.Contains(err.Error(), "branch-based") {

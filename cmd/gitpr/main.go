@@ -124,6 +124,13 @@ func newListCmd() *cobra.Command {
 				}
 				filter = "all"
 			}
+			if reason != "" && filter != "closed" {
+				flag := "--state"
+				if cmd.Flags().Changed("status") {
+					flag = "--status"
+				}
+				return fmt.Errorf("--reason can be combined only with %s closed", flag)
+			}
 			prs, err := svc.ListPRsWithReason(filter, model.ClosureReason(reason))
 			if err != nil {
 				return err
@@ -608,10 +615,20 @@ func newCloseCmd() *cobra.Command {
 }
 
 func newDeleteCmd() *cobra.Command {
-	return &cobra.Command{Use: "delete <pr-id>", Short: "Delete a PR record and all retained refs", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	var force bool
+	cmd := &cobra.Command{Use: "delete <pr-id>", Short: "Delete a PR record and all retained refs", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		svc, err := app.NewService(".")
 		if err != nil {
 			return err
+		}
+		if !force {
+			summary, err := svc.DeleteRecordSummary(args[0])
+			if err != nil {
+				return err
+			}
+			cmd.Printf("Would delete PR %s (state: %s, events: %d, threads: %d).\n", summary.ID, summary.State, summary.EventCount, summary.ThreadCount)
+			cmd.Println("Warning: pinned review commits may become collectable. Re-run with --force to delete.")
+			return errors.New("refusing to delete without --force")
 		}
 		if err := svc.DeleteRecord(args[0]); err != nil {
 			return err
@@ -619,6 +636,8 @@ func newDeleteCmd() *cobra.Command {
 		cmd.Printf("Deleted PR %s\n", shortID(args[0]))
 		return nil
 	}}
+	cmd.Flags().BoolVar(&force, "force", false, "Permanently delete the record and retained refs")
+	return cmd
 }
 
 func newDebugCmd() *cobra.Command {

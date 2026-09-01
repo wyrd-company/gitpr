@@ -127,7 +127,27 @@ func TestCloseReasonListingAndDeleteCommandsUseStdout(t *testing.T) {
 				t.Errorf("show missing %q", want)
 			}
 		}
-		if out := executeCLI(t, "delete", id); !strings.Contains(out, "Deleted PR") {
+		previewCmd := newRootCmd()
+		var previewOut bytes.Buffer
+		previewCmd.SetOut(&previewOut)
+		previewCmd.SetErr(&bytes.Buffer{})
+		previewCmd.SetArgs([]string{"delete", id})
+		if err := previewCmd.Execute(); err == nil || !strings.Contains(err.Error(), "--force") {
+			t.Fatalf("unguarded delete error=%v", err)
+		}
+		for _, want := range []string{"Would delete PR", "state: closed", "events: 0", "threads: 0", "pinned review commits may become collectable"} {
+			if !strings.Contains(previewOut.String(), want) {
+				t.Errorf("delete preview missing %q: %s", want, previewOut.String())
+			}
+		}
+		st, err := store.New(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := st.LoadPR2(id); err != nil {
+			t.Fatalf("preview deleted record: %v", err)
+		}
+		if out := executeCLI(t, "delete", id, "--force"); !strings.Contains(out, "Deleted PR") {
 			t.Fatalf("delete stdout=%q", out)
 		}
 		if refs := cliGit(t, dir, "for-each-ref", "--format=%(refname)", "refs/gitpr"); strings.Contains(refs, id) {
