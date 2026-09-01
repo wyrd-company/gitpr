@@ -102,6 +102,77 @@ func TestConcurrentUpdatesRevalidateAndPreserveBothMutations(t *testing.T) {
 	assertCommentTextsExactlyOnce(t, serviceA, pr.ID, "first updated", "second updated")
 }
 
+func TestConcurrentUpdatesOnSameIndexAreLastWriteWins(t *testing.T) {
+	serviceA, pr := newTestPR(t)
+	if _, err := serviceA.AddComment(pr.ID, testComment("original")); err != nil {
+		t.Fatal(err)
+	}
+	serviceB := secondService(t, pr.RepositoryRoot)
+	loaded := make(chan struct{})
+	release := make(chan struct{})
+	serviceA.store.SetBeforeSaveHook(oneShotBlockingHook(serviceA, loaded, release))
+
+	errA := make(chan error, 1)
+	go func() {
+		_, err := serviceA.UpdateComment(pr.ID, 0, testComment("second writer"))
+		errA <- err
+	}()
+	<-loaded
+	if _, err := serviceB.UpdateComment(pr.ID, 0, testComment("first writer")); err != nil {
+		t.Fatalf("first writer UpdateComment() error = %v", err)
+	}
+	close(release)
+	if err := <-errA; err != nil {
+		t.Fatalf("second writer UpdateComment() error = %v", err)
+	}
+
+	assertCommentTextsExactlyOnce(t, serviceA, pr.ID, "second writer")
+	loadedPR, _, err := serviceA.LoadPR(pr.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loadedPR.Comments) != 1 || loadedPR.Comments[0].Comment != "second writer" {
+		t.Fatalf("comments = %v, want exactly the second writer", commentTexts(loadedPR.Comments))
+	}
+}
+
+func TestUpdateCommentRetryUsesWinningReloadCommitSHA(t *testing.T) {
+	serviceA, pr := newTestPR(t)
+	original := testComment("original")
+	original.CommitSHA = "first-attempt-sha"
+	if _, err := serviceA.AddComment(pr.ID, original); err != nil {
+		t.Fatal(err)
+	}
+	serviceB := secondService(t, pr.RepositoryRoot)
+	loaded := make(chan struct{})
+	release := make(chan struct{})
+	serviceA.store.SetBeforeSaveHook(oneShotBlockingHook(serviceA, loaded, release))
+
+	errA := make(chan error, 1)
+	go func() {
+		_, err := serviceA.UpdateComment(pr.ID, 0, testComment("winning text"))
+		errA <- err
+	}()
+	<-loaded
+	winner := testComment("interleaved text")
+	winner.CommitSHA = "winning-reload-sha"
+	if _, err := serviceB.UpdateComment(pr.ID, 0, winner); err != nil {
+		t.Fatalf("interleaved UpdateComment() error = %v", err)
+	}
+	close(release)
+	if err := <-errA; err != nil {
+		t.Fatalf("retrying UpdateComment() error = %v", err)
+	}
+
+	loadedPR, _, err := serviceA.LoadPR(pr.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loadedPR.Comments[0].CommitSHA; got != winner.CommitSHA {
+		t.Fatalf("CommitSHA = %q, want winning reload SHA %q", got, winner.CommitSHA)
+	}
+}
+
 func TestSuccessorMetadataRefForcesReloadBeforeRetry(t *testing.T) {
 	serviceA, pr := newTestPR(t)
 	serviceB := secondService(t, pr.RepositoryRoot)
@@ -280,6 +351,26 @@ func TestUpdateCommentRejectsInvalidIndex(t *testing.T) {
 	}
 }
 
+func TestLegacyCommentMutationsPreserveOrderAndCardinality(t *testing.T) {
+	service, pr := newTestPR(t)
+	for _, text := range []string{"first", "second", "third"} {
+		if _, err := service.AddComment(pr.ID, testComment(text)); err != nil {
+			t.Fatalf("AddComment(%q) error = %v", text, err)
+		}
+	}
+
+	if _, err := service.UpdateComment(pr.ID, 1, testComment("second updated")); err != nil {
+		t.Fatalf("UpdateComment() error = %v", err)
+	}
+	loaded, _, err := service.LoadPR(pr.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := commentTexts(loaded.Comments); strings.Join(got, ",") != "first,second updated,third" {
+		t.Fatalf("comments after add and update = %v, want original order and cardinality", got)
+	}
+}
+
 func TestMergePRMergesMatchingSourceHeadAndCleansUp(t *testing.T) {
 	repoPath, featurePath, service, pr := newMergeTestPR(t)
 
@@ -333,6 +424,76 @@ func TestMergePRRefusesDeletedSourceBranch(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("MergePR() error = %q, want it to contain %q", err, want)
 		}
+	}
+}
+
+func TestMergePRReportsSuccessfulMergeWhenConcurrentRejectWinsMetadata(t *testing.T) {
+	repoPath, _, serviceA, pr := newMergeTestPR(t)
+	serviceB := secondService(t, repoPath)
+	serviceA.store.SetBeforeSaveHook(func() {
+		serviceA.store.SetBeforeSaveHook(nil)
+		if _, _, err := serviceB.RejectPR(pr.ID); err != nil {
+			t.Errorf("concurrent RejectPR() error = %v", err)
+		}
+	})
+
+	_, _, err := serviceA.MergePR(context.Background(), pr.ID, false)
+	if err == nil {
+		t.Fatal("MergePR() error = nil, want metadata repair error")
+	}
+	for _, want := range []string{"merge succeeded", pr.ID, pr.SourceHeadSHA, "repair", "retry"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("MergePR() error = %q, want %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "already closed") || strings.Contains(err.Error(), "merge failed") {
+		t.Fatalf("MergePR() error misstates merge outcome: %q", err)
+	}
+	if got := testGit(t, repoPath, "rev-parse", "main"); got != pr.SourceHeadSHA {
+		t.Fatalf("main = %s, want merged SHA %s", got, pr.SourceHeadSHA)
+	}
+}
+
+func TestMergePRRefusesConcurrentCloseBeforeBranchMerge(t *testing.T) {
+	repoPath, _, serviceA, pr := newMergeTestPR(t)
+	serviceB := secondService(t, repoPath)
+	serviceA.beforeMergeHook = func() {
+		serviceA.beforeMergeHook = nil
+		if _, _, err := serviceB.RejectPR(pr.ID); err != nil {
+			t.Errorf("concurrent RejectPR() error = %v", err)
+		}
+	}
+
+	_, _, err := serviceA.MergePR(context.Background(), pr.ID, false)
+	if err == nil || !strings.Contains(err.Error(), "already closed") {
+		t.Fatalf("MergePR() error = %v, want closed-before-merge refusal", err)
+	}
+	if got := testGit(t, repoPath, "rev-parse", "main"); got == pr.SourceHeadSHA {
+		t.Fatalf("main advanced to %s after concurrent close", got)
+	}
+}
+
+func TestMergePRConflictRetryRedetectsAgainstCurrentBase(t *testing.T) {
+	repoPath, serviceA, pr := newMergeConflictTestPR(t)
+	serviceB := secondService(t, repoPath)
+	serviceA.store.SetBeforeSaveHook(func() {
+		serviceA.store.SetBeforeSaveHook(nil)
+		testGit(t, repoPath, "update-ref", "refs/heads/main", pr.SourceHeadSHA)
+		if _, err := serviceB.AddComment(pr.ID, testComment("metadata successor")); err != nil {
+			t.Errorf("AddComment() error = %v", err)
+		}
+	})
+
+	_, _, err := serviceA.MergePR(context.Background(), pr.ID, false)
+	if err == nil || !strings.Contains(err.Error(), "merge conflicts detected") {
+		t.Fatalf("MergePR() error = %v, want conflict refusal", err)
+	}
+	loaded, _, loadErr := serviceA.LoadPR(pr.ID)
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if len(loaded.MergeConflicts) != 0 {
+		t.Fatalf("persisted conflicts = %v, want retry re-detection against advanced base", loaded.MergeConflicts)
 	}
 }
 
@@ -439,6 +600,39 @@ func newMergeTestPR(t *testing.T) (string, string, *Service, model.PR) {
 	}
 
 	return repoPath, featurePath, service, pr
+}
+
+func newMergeConflictTestPR(t *testing.T) (string, *Service, model.PR) {
+	t.Helper()
+	repoPath := t.TempDir()
+	testGit(t, repoPath, "init", "-b", "main")
+	testGit(t, repoPath, "config", "user.name", "gitpr tests")
+	testGit(t, repoPath, "config", "user.email", "gitpr@example.test")
+	writeTestFile(t, repoPath, "record.txt", "shared\n")
+	testGit(t, repoPath, "add", "record.txt")
+	testGit(t, repoPath, "commit", "-m", "base")
+
+	featurePath := filepath.Join(t.TempDir(), "feature")
+	testGit(t, repoPath, "worktree", "add", "-b", "feature", featurePath, "HEAD")
+	writeTestFile(t, featurePath, "record.txt", "feature\n")
+	testGit(t, featurePath, "add", "record.txt")
+	testGit(t, featurePath, "commit", "-m", "feature")
+	writeTestFile(t, repoPath, "record.txt", "main\n")
+	testGit(t, repoPath, "add", "record.txt")
+	testGit(t, repoPath, "commit", "-m", "main")
+
+	service, err := NewService(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr, _, err := service.CreatePR(context.Background(), CreatePRRequest{
+		Title:    "conflicting changes",
+		Worktree: featurePath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return repoPath, service, pr
 }
 
 func commentsAtAnchor(comments []model.Comment, filePath string, lineStart, lineEnd int) []model.Comment {

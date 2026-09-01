@@ -9,6 +9,49 @@ import (
 	"github.com/wyrd-company/gitpr/internal/model"
 )
 
+func TestStableGitEnvForcesCMessageLocale(t *testing.T) {
+	t.Setenv("LC_ALL", "fr_FR.UTF-8")
+	env := stableGitEnv()
+	var locales []string
+	for _, value := range env {
+		if strings.HasPrefix(value, "LC_ALL=") {
+			locales = append(locales, value)
+		}
+	}
+	if len(locales) != 1 || locales[0] != "LC_ALL=C" {
+		t.Fatalf("LC_ALL entries = %v, want [LC_ALL=C]", locales)
+	}
+}
+
+func TestRefConflictClassificationUsesStableSpecificMessages(t *testing.T) {
+	if !isRefConflict(errors.New("cannot lock ref 'refs/example'")) {
+		t.Fatal("cannot-lock-ref error was not classified as a conflict")
+	}
+	if !isRefConflict(errors.New("reference already exists")) {
+		t.Fatal("existing-reference error was not classified as a conflict")
+	}
+	if isRefConflict(errors.New("metadata is at an unexpected value")) {
+		t.Fatal("generic 'is at' text was classified as a ref conflict")
+	}
+}
+
+func TestResolveRefForLoadDistinguishesMissingRefFromGitFailure(t *testing.T) {
+	st, _ := newStoreTestPR(t)
+	if _, exists, err := st.resolveRefForLoad("refs/gitpr/pr/missing/meta"); err != nil || exists {
+		t.Fatalf("missing ref: exists = %v, error = %v; want false, nil", exists, err)
+	}
+
+	nonRepo := t.TempDir()
+	st.repo.CommonRoot = nonRepo
+	_, _, err := st.resolveRefForLoad("refs/gitpr/pr/missing/meta")
+	if err == nil {
+		t.Fatal("non-repository resolve error = nil, want verbatim git failure")
+	}
+	if !strings.Contains(err.Error(), "not a git repository") {
+		t.Fatalf("resolve error = %q, want underlying git failure", err)
+	}
+}
+
 func TestLoadPRReturnsMetadataCommitVersion(t *testing.T) {
 	st, pr := newStoreTestPR(t)
 
