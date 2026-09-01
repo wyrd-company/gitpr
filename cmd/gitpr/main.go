@@ -41,6 +41,8 @@ func newRootCmd() *cobra.Command {
 	rootCmd.AddCommand(newApproveCmd())
 	rootCmd.AddCommand(newCommentsCmd())
 	rootCmd.AddCommand(newCommentCmd())
+	rootCmd.AddCommand(newThreadStatusCmd("resolve", model.ThreadResolved))
+	rootCmd.AddCommand(newThreadStatusCmd("reopen", model.ThreadOpen))
 	rootCmd.AddCommand(newRefreshCmd())
 	rootCmd.AddCommand(newRejectCmd())
 	rootCmd.AddCommand(newMergeCmd())
@@ -197,7 +199,30 @@ func newShowCmd() *cobra.Command {
 				return err
 			}
 
-			out, err := yaml.Marshal(pr)
+			var shown any = pr
+			if branch, ok := pr.(model.PR2); ok {
+				type pr2YAML model.PR2
+				summary := struct {
+					Open     int `yaml:"open"`
+					Resolved int `yaml:"resolved"`
+					Outdated int `yaml:"outdated"`
+				}{}
+				for _, thread := range branch.Threads {
+					if thread.Status == model.ThreadResolved {
+						summary.Resolved++
+					} else {
+						summary.Open++
+					}
+					if thread.Outdated {
+						summary.Outdated++
+					}
+				}
+				shown = struct {
+					PR            pr2YAML `yaml:",inline"`
+					ThreadSummary any     `yaml:"thread_summary"`
+				}{pr2YAML(branch), summary}
+			}
+			out, err := yaml.Marshal(shown)
 			if err != nil {
 				return err
 			}
@@ -352,21 +377,28 @@ func newCommentsCmd() *cobra.Command {
 				}
 			}
 
-			pr, _, err := svc.LoadCommentsPR(targetID)
+			record, _, err := svc.LoadRecord(targetID)
 			if err != nil {
 				return err
 			}
-
-			payload := struct {
-				ID       string          `yaml:"id"`
-				Title    string          `yaml:"title"`
-				Status   model.Status    `yaml:"status"`
-				Comments []model.Comment `yaml:"comments"`
-			}{
-				ID:       pr.ID,
-				Title:    pr.Title,
-				Status:   pr.Status,
-				Comments: pr.Comments,
+			var payload any
+			switch pr := record.(type) {
+			case model.PR:
+				payload = struct {
+					ID       string          `yaml:"id"`
+					Title    string          `yaml:"title"`
+					Status   model.Status    `yaml:"status"`
+					Comments []model.Comment `yaml:"comments"`
+				}{pr.ID, pr.Title, pr.Status, pr.Comments}
+			case model.PR2:
+				payload = struct {
+					ID      string         `yaml:"id"`
+					Title   string         `yaml:"title"`
+					State   model.PRState  `yaml:"state"`
+					Threads []model.Thread `yaml:"threads"`
+				}{pr.ID, pr.Title, pr.State, pr.Threads}
+			default:
+				return fmt.Errorf("unsupported record type %T", record)
 			}
 
 			out, err := yaml.Marshal(payload)
@@ -390,12 +422,61 @@ func newCommentCmd() *cobra.Command {
 	var text string
 	var commitSHA string
 	var updateIndex int
+	var prLevel bool
+	var threadID, side string
+	var headFlags expectedHeadFlags
 
 	cmd := &cobra.Command{
 		Use:   "comment <pr-id>",
 		Short: "Add a review comment to an open PR (appends at the same anchor)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := app.NewService(".")
+			if err != nil {
+				return err
+			}
+			record, _, err := svc.LoadRecord(args[0])
+			if err != nil {
+				return err
+			}
+			if _, branchBased := record.(model.PR2); branchBased {
+				if cmd.Flags().Changed("commit") || cmd.Flags().Changed("update") {
+					return errors.New("--commit and --update apply only to legacy comments; branch-based comments use --thread and review-basis flags")
+				}
+				if prLevel {
+					for _, name := range []string{"file", "line-start", "line-end", "side"} {
+						if cmd.Flags().Changed(name) {
+							return fmt.Errorf("--%s cannot be used with --pr-level", name)
+						}
+					}
+				}
+				heads, err := headFlags.parse()
+				if err != nil {
+					return err
+				}
+				var diffSide model.DiffSide
+				switch side {
+				case "", "new":
+					diffSide = model.DiffSideSource
+				case "old":
+					diffSide = model.DiffSideBase
+				default:
+					return errors.New("--side must be old or new")
+				}
+				pr, _, err := svc.CommentPR2(cmd.Context(), args[0], app.ThreadCommentRequest{ThreadID: threadID, PRLevel: prLevel, File: filePath, Side: diffSide, LineStart: lineStart, LineEnd: lineEnd, Text: text, Heads: heads})
+				if err != nil {
+					return err
+				}
+				createdID := threadID
+				if createdID == "" {
+					createdID = pr.Threads[len(pr.Threads)-1].ID
+				}
+				cmd.Printf("Saved comment in thread %s on PR %s\n", createdID, shortID(pr.ID))
+				return nil
+			}
+			if prLevel || threadID != "" || cmd.Flags().Changed("side") || cmd.Flags().Changed("source-head") || cmd.Flags().Changed("base-head") || cmd.Flags().Changed("basis") {
+				return errors.New("branch-based thread flags do not apply to legacy comments")
+			}
 			if strings.TrimSpace(filePath) == "" {
 				return errors.New("--file is required")
 			}
@@ -413,11 +494,6 @@ func newCommentCmd() *cobra.Command {
 			}
 			if cmd.Flags().Changed("update") && updateIndex < 0 {
 				return errors.New("--update must be greater than or equal to 0")
-			}
-
-			svc, err := app.NewService(".")
-			if err != nil {
-				return err
 			}
 
 			comment := model.Comment{
@@ -454,8 +530,35 @@ func newCommentCmd() *cobra.Command {
 	cmd.Flags().StringVar(&text, "text", "", "Comment text")
 	cmd.Flags().StringVar(&commitSHA, "commit", "", "Optional commit SHA")
 	cmd.Flags().IntVar(&updateIndex, "update", -1, "Replace the comment at this index instead of appending")
+	cmd.Flags().BoolVar(&prLevel, "pr-level", false, "Create a PR-level thread")
+	cmd.Flags().StringVar(&threadID, "thread", "", "Reply in an existing thread")
+	cmd.Flags().StringVar(&side, "side", "new", "Anchored diff side: old|new")
+	headFlags.bind(cmd)
 
 	return cmd
+}
+
+func newThreadStatusCmd(verb string, status model.ThreadStatus) *cobra.Command {
+	return &cobra.Command{Use: verb + " <pr-id> <thread-id>", Short: verb + " a branch-based comment thread", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+		svc, err := app.NewService(".")
+		if err != nil {
+			return err
+		}
+		record, _, err := svc.LoadRecord(args[0])
+		if err != nil {
+			return err
+		}
+		if _, legacy := record.(model.PR); legacy {
+			return fmt.Errorf("%s is available only for branch-based PR threads; legacy comments have no thread state", verb)
+		}
+		pr, _, err := svc.SetThreadStatus(args[0], args[1], status)
+		if err != nil {
+			return err
+		}
+		label := strings.ToUpper(verb[:1]) + verb[1:]
+		cmd.Printf("%s thread %s on PR %s\n", label, args[1], shortID(pr.ID))
+		return nil
+	}}
 }
 
 func newRefreshCmd() *cobra.Command {

@@ -69,6 +69,55 @@ func TestReviewBasisCanBePastedIntoApproveCommandOnStdout(t *testing.T) {
 	})
 }
 
+func TestBranchCommentThreadCommandsAndAnchorRefsUseStdout(t *testing.T) {
+	dir := newCLITestRepo(t)
+	withinDir(t, dir, func() {
+		id := strings.Fields(executeCLI(t, "create", "--title", "Thread CLI"))[2]
+		commentOut := executeCLI(t, "comment", id, "--file", "sample.txt", "--line-start", "2", "--text", "review body")
+		fields := strings.Fields(commentOut)
+		if len(fields) < 6 || fields[0] != "Saved" || fields[4] == "" {
+			t.Fatalf("comment stdout=%q", commentOut)
+		}
+		threadID := fields[4]
+		for _, leaf := range []string{"head", "base"} {
+			if got := cliGit(t, dir, "rev-parse", "--verify", "refs/gitpr/pr/"+id+"/anchors/"+threadID+"/"+leaf); len(got) != 40 {
+				t.Fatalf("anchor %s=%q", leaf, got)
+			}
+		}
+		if out := executeCLI(t, "resolve", id, threadID); !strings.Contains(out, "Resolve thread") {
+			t.Fatalf("resolve stdout=%q", out)
+		}
+		executeCLI(t, "comment", id, "--thread", threadID, "--text", "resolved reply")
+		if out := executeCLI(t, "reopen", id, threadID); !strings.Contains(out, "Reopen thread") {
+			t.Fatalf("reopen stdout=%q", out)
+		}
+		comments := executeCLI(t, "comments", id)
+		for _, want := range []string{"kind: anchored", "status: open", "review body", "resolved reply", "source_head_sha:", "base_head_sha:"} {
+			if !strings.Contains(comments, want) {
+				t.Errorf("comments missing %q:\n%s", want, comments)
+			}
+		}
+		review := executeCLI(t, "review", id)
+		find := func(field string) string {
+			match := regexp.MustCompile(`(?m)^    ` + field + `: ([0-9a-f]{40})$`).FindStringSubmatch(review)
+			if len(match) != 2 {
+				t.Fatalf("missing %s", field)
+			}
+			return match[1]
+		}
+		executeCLI(t, "approve", id, "--basis", find("source_head_sha")+":"+find("base_head_sha"))
+		if refs := cliGit(t, dir, "for-each-ref", "--format=%(refname)", "refs/gitpr/pr/"+id+"/anchors/"+threadID); refs != "" {
+			t.Fatalf("anchor refs remain: %s", refs)
+		}
+		show := executeCLI(t, "show", id)
+		for _, want := range []string{"thread_summary:", "open: 1", "outdated: 0"} {
+			if !strings.Contains(show, want) {
+				t.Errorf("show missing %q", want)
+			}
+		}
+	})
+}
+
 func TestBranchBasedMergeCommandAdvancesBaseAndPrintsStdout(t *testing.T) {
 	dir := newCLITestRepo(t)
 	withinDir(t, dir, func() {
