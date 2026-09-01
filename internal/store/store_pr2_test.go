@@ -179,6 +179,20 @@ func TestSavePR2RejectsNonCanonicalObjectIDsOnNewEvent(t *testing.T) {
 	}
 }
 
+func TestSavePR2RejectsNonCanonicalObjectIDsOnInitialEvent(t *testing.T) {
+	st, base, head := newStoreTestHistory(t)
+	pr := completePR2(st.repo.CommonRoot, base, head)
+	pr.Events[0].BaseHeadSHA = "main"
+	refsBefore := storeTestGit(t, st.repo.CommonRoot, "for-each-ref", "--format=%(refname) %(objectname)")
+	if _, err := st.SavePR2(pr, "", ""); !errors.Is(err, ErrInvalidEventObjectID) {
+		t.Fatalf("invalid initial event object ID error = %v, want ErrInvalidEventObjectID", err)
+	}
+	refsAfter := storeTestGit(t, st.repo.CommonRoot, "for-each-ref", "--format=%(refname) %(objectname)")
+	if refsAfter != refsBefore {
+		t.Fatalf("invalid initial event mutated refs\nbefore: %s\nafter: %s", refsBefore, refsAfter)
+	}
+}
+
 func TestLoadPRDispatchesAbsentSchemaToLegacyAndSchema2ToPR2(t *testing.T) {
 	st, legacy := newStoreTestPR(t)
 	legacy, _, err := st.LoadLegacyPR(legacy.ID)
