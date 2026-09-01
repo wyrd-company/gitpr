@@ -37,10 +37,14 @@ type PR struct {
 
 func (PR) RecordSchema() int   { return 1 }
 func (pr PR) RecordID() string { return pr.ID }
+func (pr PR) RecordDisplayState() string {
+	return string(pr.Status)
+}
 
 type Record interface {
 	RecordSchema() int
 	RecordID() string
+	RecordDisplayState() string
 }
 
 type PRState string
@@ -125,24 +129,28 @@ type Thread struct {
 }
 
 type PR2 struct {
-	Schema         int           `yaml:"schema"`
-	ID             string        `yaml:"id"`
-	Title          string        `yaml:"title"`
-	SourceBranch   string        `yaml:"source_branch"`
-	BaseBranch     string        `yaml:"base_branch"`
-	RepositoryRoot string        `yaml:"repository_root"`
-	Description    string        `yaml:"description"`
-	State          PRState       `yaml:"state"`
-	Closure        *Closure      `yaml:"closure,omitempty"`
-	Events         []ReviewEvent `yaml:"events,omitempty"`
-	Threads        []Thread      `yaml:"threads,omitempty"`
-	CreatedAt      time.Time     `yaml:"created_at"`
-	UpdatedAt      time.Time     `yaml:"updated_at"`
-	ClosedAt       *time.Time    `yaml:"closed_at,omitempty"`
+	Schema             int           `yaml:"schema"`
+	ID                 string        `yaml:"id"`
+	Title              string        `yaml:"title"`
+	SourceBranch       string        `yaml:"source_branch"`
+	SourceWorktreePath string        `yaml:"source_worktree_path"`
+	BaseBranch         string        `yaml:"base_branch"`
+	RepositoryRoot     string        `yaml:"repository_root"`
+	Description        string        `yaml:"description"`
+	State              PRState       `yaml:"state"`
+	Closure            *Closure      `yaml:"closure,omitempty"`
+	Events             []ReviewEvent `yaml:"events,omitempty"`
+	Threads            []Thread      `yaml:"threads,omitempty"`
+	CreatedAt          time.Time     `yaml:"created_at"`
+	UpdatedAt          time.Time     `yaml:"updated_at"`
+	ClosedAt           *time.Time    `yaml:"closed_at,omitempty"`
 }
 
 func (PR2) RecordSchema() int   { return 2 }
 func (pr PR2) RecordID() string { return pr.ID }
+func (pr PR2) RecordDisplayState() string {
+	return string(pr.State)
+}
 
 type FileDiff struct {
 	OldPath string `yaml:"old_path,omitempty"`
