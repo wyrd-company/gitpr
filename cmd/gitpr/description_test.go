@@ -132,6 +132,56 @@ func TestCreateRejectsDescriptionAndDescriptionFileTogether(t *testing.T) {
 	})
 }
 
+func TestCreateRejectsBlankDescriptionFileWithoutWriting(t *testing.T) {
+	dir := newCLITestRepo(t)
+	withinDir(t, dir, func() {
+		cmd := newRootCmd()
+		var stdout, stderr bytes.Buffer
+		cmd.SetOut(&stdout)
+		cmd.SetErr(&stderr)
+		cmd.SetArgs([]string{"create", "--title", "Blank file flag", "--description-file", ""})
+		err := cmd.Execute()
+		if err == nil || !strings.Contains(err.Error(), "--description-file") || !strings.Contains(err.Error(), "non-blank") {
+			t.Fatalf("create with blank --description-file error = %v", err)
+		}
+
+		st, loadErr := store.New(dir)
+		if loadErr != nil {
+			t.Fatal(loadErr)
+		}
+		open, _, loadErr := st.ListPRs("open")
+		if loadErr != nil {
+			t.Fatal(loadErr)
+		}
+		if len(open) != 0 {
+			t.Fatalf("create wrote a record despite a blank --description-file: %#v", open)
+		}
+	})
+}
+
+func TestEditRejectsBlankDescriptionFileWithoutWriting(t *testing.T) {
+	dir := newCLITestRepo(t)
+	withinDir(t, dir, func() {
+		id := strings.Fields(executeCLI(t, "create", "--title", "Blank edit target"))[2]
+		beforeDoc := cliGit(t, dir, "show", "refs/gitpr/pr/"+id+"/meta:pr.yaml")
+
+		cmd := newRootCmd()
+		var stdout, stderr bytes.Buffer
+		cmd.SetOut(&stdout)
+		cmd.SetErr(&stderr)
+		cmd.SetArgs([]string{"edit", id, "--description-file", ""})
+		err := cmd.Execute()
+		if err == nil || !strings.Contains(err.Error(), "--description-file") || !strings.Contains(err.Error(), "non-blank") {
+			t.Fatalf("edit with blank --description-file error = %v", err)
+		}
+
+		afterDoc := cliGit(t, dir, "show", "refs/gitpr/pr/"+id+"/meta:pr.yaml")
+		if afterDoc != beforeDoc {
+			t.Fatalf("rejected blank --description-file edit changed the record:\n before: %s\n after: %s", beforeDoc, afterDoc)
+		}
+	})
+}
+
 func TestCreateDescriptionFileErrorsClearlyOnUnreadablePath(t *testing.T) {
 	dir := newCLITestRepo(t)
 	withinDir(t, dir, func() {

@@ -115,9 +115,16 @@ func newCreateCmd() *cobra.Command {
 // commands. --description-file (or "-" for standard input) is read
 // verbatim, byte-for-byte, with no trimming or shell interpretation.
 // --description is used as passed by cobra. Neither flag set yields "".
+// A --description-file flag that was set but given a blank (or
+// whitespace-only) path is rejected explicitly: silently falling back to
+// "no file" would store an empty description with exit 0, the exact
+// silently-empty shape (549/711) this flag exists to prevent.
 func resolveDescription(cmd *cobra.Command, description, descriptionFile string) (string, error) {
-	if strings.TrimSpace(descriptionFile) == "" {
+	if !cmd.Flags().Changed("description-file") {
 		return description, nil
+	}
+	if strings.TrimSpace(descriptionFile) == "" {
+		return "", errors.New("--description-file requires a non-blank path (or - for standard input)")
 	}
 	if descriptionFile == "-" {
 		data, err := io.ReadAll(cmd.InOrStdin())
