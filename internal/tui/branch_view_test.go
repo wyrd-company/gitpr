@@ -1,12 +1,17 @@
 package tui
 
 import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/wyrd-company/gitpr/internal/app"
 	"github.com/wyrd-company/gitpr/internal/model"
 )
 
@@ -26,6 +31,52 @@ func TestMainListRendersLegacyUnchangedAndBranchRecordWithStateReason(t *testing
 	}
 }
 
+func TestLegacyOnlyMainListOutputRemainsByteIdentical(t *testing.T) {
+	legacy := model.PR{ID: "01LEGACYTUILIST00000000000", SourceBranch: "legacy-topic", Title: "Legacy title", Status: model.StatusOpen}
+	got := ansi.Strip((&Model{width: 100, height: 30, openRecords: []model.Record{legacy}}).renderList())
+	want := "Open PRs\n\n> 01LEGACYTUIL  legacy-topic       Legacy title\n\nKeys: j/k move  enter open  q quit"
+	if got != want {
+		t.Fatalf("legacy list:\n%q\nwant:\n%q", got, want)
+	}
+}
+
+func TestTUILoaderIncludesRetainedClosedBranchRecords(t *testing.T) {
+	dir := t.TempDir()
+	tuiGit(t, dir, "init", "-b", "main")
+	tuiGit(t, dir, "config", "user.name", "test user")
+	tuiGit(t, dir, "config", "user.email", "test@example.test")
+	if err := os.WriteFile(filepath.Join(dir, "sample.txt"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tuiGit(t, dir, "add", "sample.txt")
+	tuiGit(t, dir, "commit", "-m", "base")
+	tuiGit(t, dir, "checkout", "-b", "topic")
+	if err := os.WriteFile(filepath.Join(dir, "sample.txt"), []byte("base\nchange\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tuiGit(t, dir, "add", "sample.txt")
+	tuiGit(t, dir, "commit", "-m", "change")
+	svc, err := app.NewService(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr, _, err := svc.CreatePR(context.Background(), app.CreatePRRequest{Title: "Closed record", Worktree: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := svc.ClosePR(pr.ID, app.ClosePRRequest{Reason: model.ClosureAbandoned}); err != nil {
+		t.Fatal(err)
+	}
+	msg := (&Model{svc: svc}).loadOpenPRsCmd()().(listLoadedMsg)
+	if msg.err != nil || len(msg.records) != 1 {
+		t.Fatalf("loaded records=%#v err=%v", msg.records, msg.err)
+	}
+	loaded, ok := msg.records[0].(model.PR2)
+	if !ok || loaded.State != model.PRStateClosed || loaded.Closure == nil || loaded.Closure.Reason != model.ClosureAbandoned {
+		t.Fatalf("loaded=%#v", msg.records[0])
+	}
+}
+
 func TestBranchDetailRendersReviewThreadsAndClosureEvidence(t *testing.T) {
 	pr := model.PR2{Schema: 2, ID: "01BRANCHDETAIL000000000000", Title: "Read only", SourceBranch: "topic", BaseBranch: "main", State: model.PRStateClosed,
 		Events:  []model.ReviewEvent{{ID: "01EVENTDETAIL0000000000000", Verdict: model.VerdictAccepted, SourceHeadSHA: strings.Repeat("a", 40), BaseHeadSHA: strings.Repeat("b", 40)}},
@@ -38,6 +89,14 @@ func TestBranchDetailRendersReviewThreadsAndClosureEvidence(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Errorf("detail missing %q:\n%s", want, view)
 		}
+	}
+}
+
+func tuiGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %s: %s: %v", strings.Join(args, " "), output, err)
 	}
 }
 
