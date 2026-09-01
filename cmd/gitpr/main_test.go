@@ -476,8 +476,13 @@ func TestDocumentedLegacyCommandsEnumerateAndRemoveARecord(t *testing.T) {
 				t.Fatalf("documented enumeration = %q, want the legacy meta ref only", listed)
 			}
 
+			// A nested pin proves the documented pattern reaches deeper than one
+			// path component; a single-star glob silently matches only meta.
+			nested := "refs/gitpr/pr/" + legacyID + "/events/01NESTEDEVENTPIN0000000000/head"
+			cliGit(t, dir, "update-ref", nested, cliGit(t, dir, "rev-parse", "HEAD"))
+
 			runShell(t, dir, strings.ReplaceAll(remove, "<id>", legacyID))
-			if refs := cliGit(t, dir, "for-each-ref", "--format=%(refname)", "refs/gitpr/pr/"+legacyID+"/*", "refs/gitpr/index/*/"+legacyID); refs != "" {
+			if refs := cliGit(t, dir, "for-each-ref", "--format=%(refname)", "refs/gitpr/pr/"+legacyID, "refs/gitpr/index/*/"+legacyID); refs != "" {
 				t.Fatalf("documented removal left refs: %q", refs)
 			}
 			if refs := cliGit(t, dir, "for-each-ref", "--format=%(refname)", "refs/gitpr/pr/"+keptID+"/meta"); refs == "" {

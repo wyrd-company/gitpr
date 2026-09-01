@@ -229,11 +229,12 @@ Export the record before removing it, if the evidence is not carried elsewhere:
 git show refs/gitpr/pr/<id>/meta:pr.yaml > <id>.pr.yaml
 ```
 
-Remove every ref belonging to one record:
+Remove every ref belonging to one record. The first pattern is a
+prefix, not a glob, so it also reaches nested event and anchor pins:
 
 ```bash
 git for-each-ref --format='%(refname)' \
-  'refs/gitpr/pr/<id>/*' 'refs/gitpr/index/*/<id>' |
+  refs/gitpr/pr/<id> 'refs/gitpr/index/*/<id>' |
   while read -r ref; do git update-ref -d "$ref"; done
 ```
 

@@ -438,7 +438,7 @@ func legacyRecordGuidance(id string) string {
 		"PR %q predates the branch-based model and gitpr no longer reads it. "+
 			"Read it with `git show refs/gitpr/pr/%[1]s/meta:pr.yaml`, "+
 			"recreate the review with `gitpr create`, then remove the record with "+
-			"`git for-each-ref --format='%%(refname)' 'refs/gitpr/pr/%[1]s/*' 'refs/gitpr/index/*/%[1]s' | "+
+			"`git for-each-ref --format='%%(refname)' refs/gitpr/pr/%[1]s 'refs/gitpr/index/*/%[1]s' | "+
 			"while read -r ref; do git update-ref -d \"$ref\"; done` (irreversible). "+
 			"The \"Legacy records\" section of docs/usage.md at "+
 			"https://github.com/wyrd-company/gitpr carries the full story.",

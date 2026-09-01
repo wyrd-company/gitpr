@@ -105,8 +105,13 @@ func TestLegacyRecordErrorCarriesWorkingRetrievalAndRemovalCommands(t *testing.T
 	if got := runStoreShell(t, st.repo.CommonRoot, commands[0]); !strings.Contains(got, "id: "+legacyID) {
 		t.Fatalf("documented read command output = %q", got)
 	}
+	// A nested pin proves the inlined pattern reaches deeper than one path
+	// component; a single-star glob silently matches only meta.
+	nested := "refs/gitpr/pr/" + legacyID + "/events/01NESTEDEVENTPIN0000000000/head"
+	storeTestGit(t, st.repo.CommonRoot, "update-ref", nested, storeTestGit(t, st.repo.CommonRoot, "rev-parse", "HEAD"))
+
 	runStoreShell(t, st.repo.CommonRoot, commands[2])
-	if refs := storeTestGit(t, st.repo.CommonRoot, "for-each-ref", "--format=%(refname)", "refs/gitpr/pr/"+legacyID+"/*", "refs/gitpr/index/*/"+legacyID); refs != "" {
+	if refs := storeTestGit(t, st.repo.CommonRoot, "for-each-ref", "--format=%(refname)", "refs/gitpr/pr/"+legacyID, "refs/gitpr/index/*/"+legacyID); refs != "" {
 		t.Fatalf("inlined removal command left refs: %q", refs)
 	}
 }
