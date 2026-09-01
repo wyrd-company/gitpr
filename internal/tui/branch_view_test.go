@@ -20,6 +20,9 @@ func TestMainListRendersLegacyUnchangedAndBranchRecordWithStateReason(t *testing
 	branch := model.PR2{Schema: 2, ID: "01BRANCHTUILIST00000000000", SourceBranch: "branch-topic", Title: "Branch title", State: model.PRStateClosed, Closure: &model.Closure{Reason: model.ClosureAbandoned}}
 	m := &Model{width: 100, height: 30, openRecords: []model.Record{legacy, branch}}
 	view := ansi.Strip(m.renderList())
+	if !strings.HasPrefix(view, "PRs\n") {
+		t.Fatalf("mixed retained list title:\n%s", view)
+	}
 	legacyLine := "> 01LEGACYTUIL  legacy-topic       Legacy title"
 	if !strings.Contains(view, legacyLine) {
 		t.Fatalf("legacy row changed or missing %q:\n%s", legacyLine, view)

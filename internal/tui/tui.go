@@ -484,7 +484,14 @@ func (m *Model) renderList() string {
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 
 	var lines []string
-	lines = append(lines, titleStyle.Render("Open PRs"))
+	title := "Open PRs"
+	for _, record := range m.openRecords {
+		if pr, ok := record.(model.PR2); ok && pr.State != model.PRStateOpen {
+			title = "PRs"
+			break
+		}
+	}
+	lines = append(lines, titleStyle.Render(title))
 	lines = append(lines, "")
 
 	if len(m.openRecords) == 0 {
