@@ -315,6 +315,34 @@ func (r *Repo) worktreesForBranch(ctx context.Context, branch string) ([]string,
 	return worktrees, nil
 }
 
+func (r *Repo) PrepareBranchRefUpdate(ctx context.Context, branch string) (string, error) {
+	worktrees, err := r.worktreesForBranch(ctx, branch)
+	if err != nil {
+		return "", fmt.Errorf("find worktrees for %s: %w", branch, err)
+	}
+	if len(worktrees) > 1 {
+		return "", fmt.Errorf("base branch %s is checked out in multiple worktrees; detach it in all but one before merging", branch)
+	}
+	if len(worktrees) == 0 {
+		return "", nil
+	}
+	status, err := runGit(ctx, worktrees[0], "status", "--porcelain")
+	if err != nil {
+		return "", fmt.Errorf("inspect base worktree %s: %w", worktrees[0], err)
+	}
+	if strings.TrimSpace(status) != "" {
+		return "", fmt.Errorf("base branch %s worktree %s is dirty; commit or discard its changes before merging", branch, worktrees[0])
+	}
+	return worktrees[0], nil
+}
+
+func (r *Repo) RefreshWorktree(ctx context.Context, path, head string) error {
+	if _, err := runGit(ctx, path, "read-tree", "--reset", "-u", head); err != nil {
+		return fmt.Errorf("refresh worktree %s: %w", path, err)
+	}
+	return nil
+}
+
 func (r *Repo) CleanupSourceWorktree(ctx context.Context, sourceWorktreePath, sourceBranch string) error {
 	currentWD, err := os.Getwd()
 	if err == nil {
