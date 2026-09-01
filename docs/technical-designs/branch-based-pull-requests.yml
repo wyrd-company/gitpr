@@ -173,8 +173,12 @@ proposed-design:
     exactly that pair. An approval therefore cannot certify commits the
     reviewer did not read: movement between reviewing and judging fails the
     approval the same way movement between judging and merging fails the
-    merge. Reject does not check live-head drift: it records the rejected
-    event for the expected pair as read. A rejection certifies nothing
+    merge. A branch that moves between the live-head check and the event
+    append does not invalidate the event: the event truthfully records the
+    pair that was judged, and the merge gate's own live-head comparison keeps
+    any unreviewed movement unmergeable. Reject does not check live-head
+    drift: it records the rejected event for the expected pair as read. A
+    rejection certifies nothing
     mergeable, so drift cannot launder unreviewed commits through it, and
     refusing a valid rejection because the author pushed mid-review would
     re-strand the review — the failure this design exists to remove.
