@@ -76,6 +76,34 @@ func TestResolveRefForLoadDistinguishesMissingRefFromGitFailure(t *testing.T) {
 	}
 }
 
+func TestResolveRefForLoadUsesOneGitProcess(t *testing.T) {
+	file, err := parser.ParseFile(token.NewFileSet(), "store.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || function.Name.Name != "resolveRefForLoad" {
+			continue
+		}
+		ast.Inspect(function.Body, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			identifier, ok := call.Fun.(*ast.Ident)
+			if ok && identifier.Name == "runGit" {
+				calls++
+			}
+			return true
+		})
+	}
+	if calls != 1 {
+		t.Fatalf("resolveRefForLoad git process count = %d, want 1", calls)
+	}
+}
+
 func TestLoadPRReturnsMetadataCommitVersion(t *testing.T) {
 	st, pr := newStoreTestPR(t)
 
