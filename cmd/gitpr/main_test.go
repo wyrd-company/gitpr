@@ -452,3 +452,78 @@ func cliGit(t *testing.T, dir string, args ...string) string {
 	}
 	return strings.TrimSpace(string(out))
 }
+
+// TestDocumentedLegacyCommandsEnumerateAndRemoveARecord executes the shell
+// blocks the refusal error points people at, so the prose and the behavior
+// cannot drift apart.
+func TestDocumentedLegacyCommandsEnumerateAndRemoveARecord(t *testing.T) {
+	for _, doc := range []string{"../../docs/usage.md", "../../README.md"} {
+		t.Run(doc, func(t *testing.T) {
+			enumerate := documentedShellBlock(t, doc, "for-each-ref", "schema:")
+			remove := documentedShellBlock(t, doc, "update-ref -d")
+
+			dir := newCLITestRepo(t)
+			legacyID := writeCLILegacyRecord(t, dir, "01LEGACYDOCCOMMANDS0000000")
+			var keptID string
+			withinDir(t, dir, func() {
+				keptID = strings.Fields(executeCLI(t, "create", "--title", "Kept record"))[2]
+			})
+
+			listed := runShell(t, dir, enumerate)
+			if listed != "refs/gitpr/pr/"+legacyID+"/meta" {
+				t.Fatalf("documented enumeration = %q, want the legacy meta ref only", listed)
+			}
+
+			runShell(t, dir, strings.ReplaceAll(remove, "<id>", legacyID))
+			if refs := cliGit(t, dir, "for-each-ref", "--format=%(refname)", "refs/gitpr/pr/"+legacyID+"/*", "refs/gitpr/index/*/"+legacyID); refs != "" {
+				t.Fatalf("documented removal left refs: %q", refs)
+			}
+			if refs := cliGit(t, dir, "for-each-ref", "--format=%(refname)", "refs/gitpr/pr/"+keptID+"/meta"); refs == "" {
+				t.Fatal("documented removal also removed the branch-based record")
+			}
+		})
+	}
+}
+
+func documentedShellBlock(t *testing.T, path string, required ...string) string {
+	t.Helper()
+	source, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sections := strings.Split(string(source), "## Legacy records")
+	if len(sections) != 2 {
+		t.Fatalf("%s has no single \"Legacy records\" section", path)
+	}
+	for _, block := range strings.Split(sections[1], "```") {
+		if !strings.HasPrefix(block, "bash\n") {
+			continue
+		}
+		body := strings.TrimPrefix(block, "bash\n")
+		matched := true
+		for _, want := range required {
+			if !strings.Contains(body, want) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return body
+		}
+	}
+	t.Fatalf("%s has no documented shell block containing %v", path, required)
+	return ""
+}
+
+func runShell(t *testing.T, dir, script string) string {
+	t.Helper()
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Dir = dir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("documented command failed: %s\n%s: %v", script, stderr.String(), err)
+	}
+	return strings.TrimSpace(stdout.String())
+}
