@@ -56,6 +56,19 @@ func TestMergePR2RefusesPRWithoutReviewEvent(t *testing.T) {
 	}
 }
 
+func TestMergePR2RefusesTerminalRecord(t *testing.T) {
+	_, service, pr, _ := newAcceptedBranchPR(t)
+	stored, version, _ := service.store.LoadPR2(pr.ID)
+	stored.State = model.PRStateClosed
+	stored.Closure = &model.Closure{Reason: model.ClosureAbandoned}
+	if _, err := service.store.SavePR2(stored, model.PRStateOpen, version); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := service.mergeBranchPR(context.Background(), pr.ID, false); err == nil || !strings.Contains(err.Error(), "only open") {
+		t.Fatalf("terminal merge error = %v", err)
+	}
+}
+
 func TestMergePR2RefusesSideSpecificLiveHeadFailures(t *testing.T) {
 	tests := []struct {
 		name   string
