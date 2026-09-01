@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,7 +11,142 @@ import (
 	"testing"
 
 	"github.com/wyrd-company/gitpr/internal/model"
+	"github.com/wyrd-company/gitpr/internal/store"
 )
+
+func TestConcurrentAddCommentRetriesAndPreservesBothComments(t *testing.T) {
+	serviceA, pr := newTestPR(t)
+	serviceB := secondService(t, pr.RepositoryRoot)
+	loaded := make(chan struct{})
+	release := make(chan struct{})
+	serviceA.store.SetBeforeSaveHook(func() {
+		close(loaded)
+		<-release
+		serviceA.store.SetBeforeSaveHook(nil)
+	})
+
+	errA := make(chan error, 1)
+	go func() {
+		_, err := serviceA.AddComment(pr.ID, testComment("alpha"))
+		errA <- err
+	}()
+	<-loaded
+	if _, err := serviceB.AddComment(pr.ID, testComment("bravo")); err != nil {
+		t.Fatalf("service B AddComment() error = %v", err)
+	}
+	close(release)
+	if err := <-errA; err != nil {
+		t.Fatalf("service A AddComment() error = %v", err)
+	}
+
+	assertCommentTextsExactlyOnce(t, serviceA, pr.ID, "alpha", "bravo")
+}
+
+func TestConcurrentAddAndUpdatePreserveBothMutations(t *testing.T) {
+	serviceA, pr := newTestPR(t)
+	if _, err := serviceA.AddComment(pr.ID, testComment("original")); err != nil {
+		t.Fatal(err)
+	}
+	serviceB := secondService(t, pr.RepositoryRoot)
+	loaded := make(chan struct{})
+	release := make(chan struct{})
+	serviceA.store.SetBeforeSaveHook(oneShotBlockingHook(serviceA, loaded, release))
+
+	errA := make(chan error, 1)
+	go func() {
+		_, err := serviceA.AddComment(pr.ID, testComment("appended"))
+		errA <- err
+	}()
+	<-loaded
+	replacement := testComment("updated")
+	if _, err := serviceB.UpdateComment(pr.ID, 0, replacement); err != nil {
+		t.Fatalf("service B UpdateComment() error = %v", err)
+	}
+	close(release)
+	if err := <-errA; err != nil {
+		t.Fatalf("service A AddComment() error = %v", err)
+	}
+
+	assertCommentTextsExactlyOnce(t, serviceA, pr.ID, "updated", "appended")
+}
+
+func TestConcurrentUpdatesRevalidateAndPreserveBothMutations(t *testing.T) {
+	serviceA, pr := newTestPR(t)
+	if _, err := serviceA.AddComment(pr.ID, testComment("first")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := serviceA.AddComment(pr.ID, testComment("second")); err != nil {
+		t.Fatal(err)
+	}
+	serviceB := secondService(t, pr.RepositoryRoot)
+	loaded := make(chan struct{})
+	release := make(chan struct{})
+	serviceA.store.SetBeforeSaveHook(oneShotBlockingHook(serviceA, loaded, release))
+
+	errA := make(chan error, 1)
+	go func() {
+		_, err := serviceA.UpdateComment(pr.ID, 0, testComment("first updated"))
+		errA <- err
+	}()
+	<-loaded
+	if _, err := serviceB.UpdateComment(pr.ID, 1, testComment("second updated")); err != nil {
+		t.Fatalf("service B UpdateComment() error = %v", err)
+	}
+	close(release)
+	if err := <-errA; err != nil {
+		t.Fatalf("service A UpdateComment() error = %v", err)
+	}
+
+	assertCommentTextsExactlyOnce(t, serviceA, pr.ID, "first updated", "second updated")
+}
+
+func TestSuccessorMetadataRefForcesReloadBeforeRetry(t *testing.T) {
+	serviceA, pr := newTestPR(t)
+	serviceB := secondService(t, pr.RepositoryRoot)
+	serviceA.store.SetBeforeSaveHook(func() {
+		serviceA.store.SetBeforeSaveHook(nil)
+		if _, err := serviceB.AddComment(pr.ID, testComment("successor")); err != nil {
+			t.Errorf("install successor metadata: %v", err)
+		}
+	})
+
+	if _, err := serviceA.AddComment(pr.ID, testComment("retry")); err != nil {
+		t.Fatalf("service A AddComment() error = %v", err)
+	}
+	assertCommentTextsExactlyOnce(t, serviceA, pr.ID, "successor", "retry")
+}
+
+func TestMetadataConflictExhaustionRequestsRetry(t *testing.T) {
+	serviceA, pr := newTestPR(t)
+	serviceB := secondService(t, pr.RepositoryRoot)
+	n := 0
+	serviceA.store.SetBeforeSaveHook(func() {
+		n++
+		if _, err := serviceB.AddComment(pr.ID, testComment(fmt.Sprintf("winner %d", n))); err != nil {
+			t.Errorf("service B AddComment() error = %v", err)
+		}
+	})
+
+	_, err := serviceA.AddComment(pr.ID, testComment("loser"))
+	if !errors.Is(err, store.ErrMetadataConflict) {
+		t.Fatalf("AddComment() error = %v, want ErrMetadataConflict", err)
+	}
+	if !strings.Contains(err.Error(), "retry the command") {
+		t.Fatalf("AddComment() error = %q, want retry guidance", err)
+	}
+	if n != metadataMutationAttempts {
+		t.Fatalf("conflicting attempts = %d, want %d", n, metadataMutationAttempts)
+	}
+	loaded, _, loadErr := serviceA.LoadPR(pr.ID)
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	for _, comment := range loaded.Comments {
+		if comment.Comment == "loser" {
+			t.Fatal("failed mutation was stored")
+		}
+	}
+}
 
 func TestAddCommentAtSameAnchorAppends(t *testing.T) {
 	svc, pr := newTestPR(t)
@@ -225,6 +362,49 @@ func newTestPR(t *testing.T) (*Service, model.PR) {
 		t.Fatalf("CreatePR() error = %v", err)
 	}
 	return svc, pr
+}
+
+func secondService(t *testing.T, repoPath string) *Service {
+	t.Helper()
+	service, err := NewService(repoPath)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	return service
+}
+
+func oneShotBlockingHook(service *Service, loaded chan<- struct{}, release <-chan struct{}) func() {
+	return func() {
+		close(loaded)
+		<-release
+		service.store.SetBeforeSaveHook(nil)
+	}
+}
+
+func testComment(text string) model.Comment {
+	return model.Comment{
+		FilePath:  "app.txt",
+		LineStart: 2,
+		LineEnd:   2,
+		Comment:   text,
+	}
+}
+
+func assertCommentTextsExactlyOnce(t *testing.T, service *Service, id string, want ...string) {
+	t.Helper()
+	pr, _, err := service.LoadPR(id)
+	if err != nil {
+		t.Fatalf("LoadPR() error = %v", err)
+	}
+	counts := make(map[string]int)
+	for _, comment := range pr.Comments {
+		counts[comment.Comment]++
+	}
+	for _, text := range want {
+		if counts[text] != 1 {
+			t.Errorf("comment %q count = %d, want 1; all comments = %v", text, counts[text], commentTexts(pr.Comments))
+		}
+	}
 }
 
 func newMergeTestPR(t *testing.T) (string, string, *Service, model.PR) {
