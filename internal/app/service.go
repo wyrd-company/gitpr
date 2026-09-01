@@ -116,6 +116,8 @@ func (s *Service) CreatePR(ctx context.Context, req CreatePRRequest) (model.PR, 
 }
 
 func (s *Service) ListPRs(status string) ([]model.PR, error) {
+	// Temporary legacy-only projection. Increment 6 rewires presentation to the
+	// schema-dispatched record union before schema-2 creation becomes public.
 	return s.store.ListLegacyPRs(status)
 }
 

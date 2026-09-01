@@ -34,6 +34,10 @@ type Store struct {
 
 var ErrMetadataConflict = errors.New("gitpr metadata changed concurrently")
 var ErrRecordSchema = errors.New("gitpr record has a different schema")
+var ErrLegacyWriteSchema = errors.New("legacy write requires a legacy record")
+var ErrSchema2WriteSchema = errors.New("schema-2 write requires a schema-2 record")
+var ErrUnsupportedSchema = errors.New("unsupported PR schema")
+var ErrDuplicateEventID = errors.New("duplicate review event ID")
 
 func New(root string) (*Store, error) {
 	repo, err := gitutil.Open(root)
@@ -88,6 +92,9 @@ func (s *Store) SavePR(pr model.PR, previousStatus model.Status, expectedMeta st
 	}
 	if s.beforeSaveHook != nil {
 		s.beforeSaveHook()
+	}
+	if err := s.validateLegacyExpectedMeta(expectedMeta); err != nil {
+		return "", err
 	}
 
 	metaRef := s.metaRef(pr.ID)
@@ -235,12 +242,28 @@ func (s *Store) SavePR2(pr model.PR2, previousState model.PRState, expectedMeta 
 }
 
 func (s *Store) validateEventHistory(pr model.PR2, expectedMeta string) error {
+	seen := make(map[string]struct{}, len(pr.Events))
+	for _, event := range pr.Events {
+		if _, duplicate := seen[event.ID]; duplicate {
+			return fmt.Errorf("%w %q", ErrDuplicateEventID, event.ID)
+		}
+		seen[event.ID] = struct{}{}
+	}
 	if expectedMeta == "" {
 		return nil
 	}
 	data, err := s.showFileFromRef(expectedMeta, prFileName)
 	if err != nil {
 		return err
+	}
+	var discriminator struct {
+		Schema *int `yaml:"schema"`
+	}
+	if err := yaml.Unmarshal(data, &discriminator); err != nil {
+		return err
+	}
+	if discriminator.Schema == nil || *discriminator.Schema != 2 {
+		return fmt.Errorf("%w: prior metadata is not schema 2", ErrSchema2WriteSchema)
 	}
 	var previous model.PR2
 	if err := yaml.Unmarshal(data, &previous); err != nil {
@@ -250,11 +273,41 @@ func (s *Store) validateEventHistory(pr model.PR2, expectedMeta string) error {
 		return errors.New("review events are append-only")
 	}
 	for i := range previous.Events {
-		if pr.Events[i] != previous.Events[i] {
+		if !sameReviewEvent(pr.Events[i], previous.Events[i]) {
 			return errors.New("review events are immutable")
 		}
 	}
 	return nil
+}
+
+func (s *Store) validateLegacyExpectedMeta(expectedMeta string) error {
+	if expectedMeta == "" {
+		return nil
+	}
+	data, err := s.showFileFromRef(expectedMeta, prFileName)
+	if err != nil {
+		return err
+	}
+	var discriminator struct {
+		Schema *int `yaml:"schema"`
+	}
+	if err := yaml.Unmarshal(data, &discriminator); err != nil {
+		return err
+	}
+	if discriminator.Schema != nil {
+		return fmt.Errorf("%w: prior metadata has schema %d", ErrLegacyWriteSchema, *discriminator.Schema)
+	}
+	return nil
+}
+
+func sameReviewEvent(left, right model.ReviewEvent) bool {
+	return left.ID == right.ID &&
+		left.SourceHeadSHA == right.SourceHeadSHA &&
+		left.BaseHeadSHA == right.BaseHeadSHA &&
+		left.MergeBaseSHA == right.MergeBaseSHA &&
+		left.Verdict == right.Verdict &&
+		left.Timestamp.Equal(right.Timestamp) &&
+		left.PredecessorEventID == right.PredecessorEventID
 }
 
 func (s *Store) desiredPR2Pins(pr model.PR2) map[string]string {
@@ -325,7 +378,7 @@ func (s *Store) LoadPR(id string) (model.Record, string, error) {
 		return pr, metaVersion, nil
 	}
 	if *discriminator.Schema != 2 {
-		return nil, "", fmt.Errorf("unsupported PR schema %d", *discriminator.Schema)
+		return nil, "", fmt.Errorf("%w %d", ErrUnsupportedSchema, *discriminator.Schema)
 	}
 	var pr model.PR2
 	if err := yaml.Unmarshal(data, &pr); err != nil {
@@ -373,6 +426,9 @@ func (s *Store) ListPRs(filter string) ([]model.Record, error) {
 	for _, id := range ids {
 		pr, _, err := s.LoadPR(id)
 		if err != nil {
+			if errors.Is(err, ErrUnsupportedSchema) {
+				continue
+			}
 			return nil, err
 		}
 		prs = append(prs, pr)
@@ -385,6 +441,8 @@ func (s *Store) ListPRs(filter string) ([]model.Record, error) {
 }
 
 func (s *Store) ListLegacyPRs(filter string) ([]model.PR, error) {
+	// Temporary compatibility narrowing: increment 6 rewires service listing to
+	// consume schema-dispatched records before schema-2 creation becomes public.
 	records, err := s.ListPRs(filter)
 	if err != nil {
 		return nil, err
@@ -517,17 +575,7 @@ func (s *Store) listIDsForFilter(filter string) ([]string, error) {
 		if err := addRefs(prRefPrefix + "/*/meta"); err != nil {
 			return nil, err
 		}
-	case "closed":
-		if err := addRefs(indexRefPrefix + "/closed/*"); err != nil {
-			return nil, err
-		}
-		if err := addRefs(indexRefPrefix + "/approved/*"); err != nil {
-			return nil, err
-		}
-		if err := addRefs(indexRefPrefix + "/rejected/*"); err != nil {
-			return nil, err
-		}
-	case "open", "approved", "rejected", "merged":
+	case "open", "approved", "rejected", "merged", "closed":
 		if err := addRefs(indexRefPrefix + "/" + filter + "/*"); err != nil {
 			return nil, err
 		}
