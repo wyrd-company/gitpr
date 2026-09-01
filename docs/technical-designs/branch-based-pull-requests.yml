@@ -76,9 +76,16 @@ proposed-design:
     so every judged commit stays reachable against garbage collection. A
     comment thread's recorded head pair is pinned the same way: writing a
     thread against a pair no event has recorded creates anchor refs
-    refs/gitpr/pr/<id>/anchors/<thread-id>/{head,base}, released when an
-    event later records the same pair, so a thread's trees stay reachable
-    whether or not its basis is ever judged. An
+    refs/gitpr/pr/<id>/anchors/<thread-id>/{head,base}. Anchor refs are
+    released when an event records the same pair, and otherwise live as
+    long as the record does — delete removes them with everything else —
+    so a thread's trees stay reachable whether or not its basis is ever
+    judged. A thread is stored in the metadata document as: thread id,
+    kind (anchored or PR-level), status (open or resolved), the outdated
+    flag, and for anchored threads the recorded source and base head pair
+    with the file, side, and line range; each comment in the thread
+    carries its body, timestamp, the head pair it was written against,
+    and its post-closure marker when written after closure. An
     event's diff is not stored: it is recomputed on demand from the two
     pinned commits, so the metadata document stays bounded by event count,
     not diff size. New-model status indexes are
@@ -159,17 +166,21 @@ proposed-design:
     Approve and reject take the reviewed head pair from the review output as
     their expected heads. The expected pair is mandatory: a verdict invoked
     without one is refused — there is no live-heads fallback, because a
-    fallback would certify whatever the branches point at unseen. At event
-    creation each resolves the live heads and
-    refuses when either differs from the expected pair, naming the expected
-    and the live identity; only on a match does it atomically record the
-    event for exactly that pair. A verdict therefore cannot certify commits
-    the reviewer did not read: movement between reviewing and judging fails
-    the verdict the same way movement between judging and merging fails the
-    merge. Beyond its event refs, approve performs no repository mutation:
-    no base write, no worktree creation, no cleanup. Reject is symmetric.
-    Approve and merge are distinct verbs with distinct effects; no alias
-    joins them.
+    fallback would certify whatever the branches point at unseen. Approve
+    additionally resolves the live heads at event creation and refuses when
+    either differs from the expected pair, naming the expected and the live
+    identity; only on a match does it atomically record the event for
+    exactly that pair. An approval therefore cannot certify commits the
+    reviewer did not read: movement between reviewing and judging fails the
+    approval the same way movement between judging and merging fails the
+    merge. Reject does not check live-head drift: it records the rejected
+    event for the expected pair as read. A rejection certifies nothing
+    mergeable, so drift cannot launder unreviewed commits through it, and
+    refusing a valid rejection because the author pushed mid-review would
+    re-strand the review — the failure this design exists to remove.
+    Beyond its event refs, a verdict performs no repository mutation: no
+    base write, no worktree creation, no cleanup. Approve and merge are
+    distinct verbs with distinct effects; no alias joins them.
 
   comment-lifecycle: >-
     A comment thread belongs to the PR. A thread is either anchored — to a
@@ -188,10 +199,12 @@ proposed-design:
     hand — the thread degrades to outdated with its text and recorded
     identities intact. Anchored threads re-map through the diff between the
     thread's recorded trees and the newest reviewed trees. The persisted
-    re-map happens when state is written anyway — a verdict, or a comment
-    write — while the review surface merely computes and displays the
-    projected marking for the basis it is rendering, persisting nothing. A
-    range that no
+    re-map happens when state is written anyway, with a bounded target: a
+    verdict re-maps every thread to the event's recorded pair; a comment
+    write re-maps only the thread being written, to the pair the comment
+    is written against. The review surface merely computes and displays
+    the projected marking for the basis it is rendering, persisting
+    nothing. A range that no
     longer maps, or whose content changed, marks the thread outdated: kept,
     displayed, flagged, never blocking — head equality already gates merge,
     so outdated marking is informational. PR-level threads never outdate.
@@ -289,8 +302,11 @@ proposed-design:
     thread outdated, which is safe but noisy.
 
   stated-assumptions: >-
-    Per-event pinning refs keep repository ref count acceptable at gitpr's
-    scale of one repository and one team. Recomputing an event's diff from
+    Pinning refs — two per event, plus two per anchored thread whose pair no
+    event has recorded, the latter released when a matching event lands and
+    otherwise held until the record is deleted — keep repository ref count
+    acceptable at gitpr's scale of one repository and one team; a PR with
+    dozens of threads costs tens of refs. Recomputing an event's diff from
     its pinned commits is deterministic for a fixed git version and diff
     algorithm; a git upgrade may shift hunk boundaries, which at worst
     marks affected threads outdated.
