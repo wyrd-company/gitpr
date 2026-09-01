@@ -126,11 +126,12 @@ Close an open branch-based PR without changing either branch:
 gitpr close 01K0ABCDEFGH --reason abandoned --note "Not proceeding"
 gitpr close 01K0ABCDEFGH --reason superseded --superseded-by 01K0HIJKLMNO
 gitpr close 01K0ABCDEFGH --reason integrated --destination main \
-  --commit ffffffffffffffffffffffffffffffffffffffff
+  --commit <landed-commit-sha>
 ```
 
 Closed and merged records remain available through `list --state`, `list
---all`, and `show` until explicitly removed with `gitpr delete <id>`.
+--all`, and `show` until explicitly removed with `gitpr delete <id> --force`.
+Deletion is exceptional: it may make pinned review commits collectable.
 
 Show a full PR:
 
