@@ -6,18 +6,24 @@ so every worktree and clone can use the same records without a server.
 
 ![gitpr local review demo](docs/assets/demo.gif)
 
-## Versioning
+## Versioning and release
 
-This repo uses [`tagver`](https://github.com/wyrd-company/tagver) for tag-driven
-version calculation.
+[Intentional](https://github.com/wyrd-company/intentional) is the version and
+release authority for this repo. It is a tag-only release unit: `go.mod`
+carries no version and is never rewritten, and the release version lives
+entirely in bare `X.Y.Z` Git tags (no `v` prefix).
 
-- Release tags should use the `vX.Y.Z` format
-- `task build` embeds the current calculated version into `gitpr --version` when
-  `tagver` is installed
-- The release workflow validates that the pushed tag matches the
-  `tagver`-calculated version before publishing
+- `intentional add` records an intent for the next release
+- `intentional status` / `intentional plan` show pending intents and the
+  computed next version
+- `intentional apply` writes the changelog and consumes intents; the harness
+  commits the result
+- `intentional tag` creates the annotated release tag after that commit lands
 
-Helpful commands:
+Pushing the resulting tag triggers `.github/workflows/release.yml`, which is
+unchanged by Intentional adoption. Separately,
+[`tagver`](https://github.com/wyrd-company/tagver) stamps the currently tagged
+version into `gitpr --version` at build time:
 
 ```bash
 task version
