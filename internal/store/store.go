@@ -85,6 +85,9 @@ func (s *Store) SavePR(pr model.PR, previousStatus model.Status, expectedMeta st
 	if strings.TrimSpace(pr.ID) == "" {
 		return "", errors.New("PR ID is required")
 	}
+	if s.beforeSaveHook != nil {
+		s.beforeSaveHook()
+	}
 
 	metaRef := s.metaRef(pr.ID)
 	oldHead, _ := s.resolveRef(s.headRef(pr.ID))
@@ -100,10 +103,6 @@ func (s *Store) SavePR(pr model.PR, previousStatus model.Status, expectedMeta st
 	message := "gitpr: update " + pr.ID
 	if expectedMeta == "" {
 		message = "gitpr: create " + pr.ID
-	}
-
-	if s.beforeSaveHook != nil {
-		s.beforeSaveHook()
 	}
 
 	metaCommit, err := s.writeCommit(prFileName, data, expectedMeta, message)
