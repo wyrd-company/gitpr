@@ -60,7 +60,7 @@ func (s *Service) CommentPR2(ctx context.Context, id string, req ThreadCommentRe
 				req.Side = model.DiffSideSource
 			}
 			if req.Side != model.DiffSideSource && req.Side != model.DiffSideBase {
-				return model.PR2{}, "", errors.New("--side must be old or new")
+				return model.PR2{}, "", errors.New("thread side must be source or base")
 			}
 		}
 	}
@@ -195,8 +195,6 @@ func remapThread(ctx context.Context, repo *gitutil.Repo, thread model.Thread, h
 	}
 	oldText, oldErr := repo.FileContentAtRef(ctx, oldRef, anchor.File)
 	newText, newErr := repo.FileContentAtRef(ctx, newRef, anchor.File)
-	anchor.SourceHeadSHA, anchor.BaseHeadSHA = heads.Source, heads.Base
-	thread.Anchor = &anchor
 	if oldErr != nil || newErr != nil {
 		thread.Outdated = true
 		return thread
@@ -206,44 +204,46 @@ func remapThread(ctx context.Context, repo *gitutil.Repo, thread model.Thread, h
 		thread.Outdated = true
 		return thread
 	}
+	anchor.SourceHeadSHA, anchor.BaseHeadSHA = heads.Source, heads.Base
+	thread.Anchor = &anchor
 	thread.Anchor.LineStart, thread.Anchor.LineEnd, thread.Outdated = start, end, false
 	return thread
 }
 
 func splitFileLines(text string) []string { return strings.Split(strings.TrimSuffix(text, "\n"), "\n") }
 
-// mapUnchangedRange walks an LCS diff and maps only contiguous, unchanged lines.
+const remapLineLimit = 50_000
+
+type lineMatch struct{ old, new int }
+
+// mapUnchangedRange trims unchanged edges, then walks an LCS diff with
+// Hirschberg's two-row algorithm so memory is linear in the shorter input.
 func mapUnchangedRange(oldLines, newLines []string, start, end int) (int, int, bool) {
 	if start <= 0 || end < start || end > len(oldLines) {
 		return 0, 0, false
 	}
-	dp := make([][]int, len(oldLines)+1)
-	for i := range dp {
-		dp[i] = make([]int, len(newLines)+1)
+	prefix := 0
+	for prefix < len(oldLines) && prefix < len(newLines) && oldLines[prefix] == newLines[prefix] {
+		prefix++
 	}
-	for i := len(oldLines) - 1; i >= 0; i-- {
-		for j := len(newLines) - 1; j >= 0; j-- {
-			if oldLines[i] == newLines[j] {
-				dp[i][j] = dp[i+1][j+1] + 1
-			} else if dp[i+1][j] >= dp[i][j+1] {
-				dp[i][j] = dp[i+1][j]
-			} else {
-				dp[i][j] = dp[i][j+1]
-			}
-		}
+	oldEnd, newEnd := len(oldLines), len(newLines)
+	for oldEnd > prefix && newEnd > prefix && oldLines[oldEnd-1] == newLines[newEnd-1] {
+		oldEnd--
+		newEnd--
 	}
-	mapping := make(map[int]int)
-	i, j := 0, 0
-	for i < len(oldLines) && j < len(newLines) {
-		if oldLines[i] == newLines[j] {
-			mapping[i+1] = j + 1
-			i++
-			j++
-		} else if dp[i+1][j] >= dp[i][j+1] {
-			i++
-		} else {
-			j++
-		}
+	if oldEnd-prefix > remapLineLimit || newEnd-prefix > remapLineLimit {
+		return 0, 0, false
+	}
+	mapping := make(map[int]int, prefix+(len(oldLines)-oldEnd))
+	for i := 0; i < prefix; i++ {
+		mapping[i+1] = i + 1
+	}
+	for _, match := range lcsMatches(oldLines[prefix:oldEnd], newLines[prefix:newEnd]) {
+		mapping[prefix+match.old+1] = prefix + match.new + 1
+	}
+	shift := newEnd - oldEnd
+	for i := oldEnd; i < len(oldLines); i++ {
+		mapping[i+1] = i + shift + 1
 	}
 	newStart, ok := mapping[start]
 	if !ok {
@@ -256,4 +256,70 @@ func mapUnchangedRange(oldLines, newLines []string, start, end int) (int, int, b
 		}
 	}
 	return newStart, newStart + (end - start), true
+}
+
+func lcsMatches(a, b []string) []lineMatch {
+	if len(a) == 0 || len(b) == 0 {
+		return nil
+	}
+	if len(b) > len(a) {
+		swapped := lcsMatches(b, a)
+		for i := range swapped {
+			swapped[i].old, swapped[i].new = swapped[i].new, swapped[i].old
+		}
+		return swapped
+	}
+	if len(a) == 1 {
+		for j := range b {
+			if a[0] == b[j] {
+				return []lineMatch{{old: 0, new: j}}
+			}
+		}
+		return nil
+	}
+	mid := len(a) / 2
+	left := lcsScore(a[:mid], b)
+	right := lcsScoreReverse(a[mid:], b)
+	split := 0
+	for j := 1; j <= len(b); j++ {
+		if left[j]+right[len(b)-j] > left[split]+right[len(b)-split] {
+			split = j
+		}
+	}
+	first := lcsMatches(a[:mid], b[:split])
+	second := lcsMatches(a[mid:], b[split:])
+	for i := range second {
+		second[i].old += mid
+		second[i].new += split
+	}
+	return append(first, second...)
+}
+
+func lcsScore(a, b []string) []int {
+	row := make([]int, len(b)+1)
+	for _, av := range a {
+		previous := 0
+		for j, bv := range b {
+			above := row[j+1]
+			if av == bv {
+				row[j+1] = previous + 1
+			} else if row[j] > row[j+1] {
+				row[j+1] = row[j]
+			}
+			previous = above
+		}
+	}
+	return row
+}
+
+func lcsScoreReverse(a, b []string) []int {
+	reversedA := append([]string(nil), a...)
+	reversedB := append([]string(nil), b...)
+	for i, j := 0, len(reversedA)-1; i < j; i, j = i+1, j-1 {
+		reversedA[i], reversedA[j] = reversedA[j], reversedA[i]
+	}
+	for i, j := 0, len(reversedB)-1; i < j; i, j = i+1, j-1 {
+		reversedB[i], reversedB[j] = reversedB[j], reversedB[i]
+	}
+	return lcsScore(reversedA, reversedB)
 }

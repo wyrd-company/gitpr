@@ -92,6 +92,60 @@ func TestCommentTimeRemapMovesUnchangedRangeAndMarksChangedOrMissingContentOutda
 	}
 }
 
+func TestOutdatedVerdictKeepsOriginalAnchorPairPinnedThroughGC(t *testing.T) {
+	dir, service := newBranchService(t)
+	pr, _, _ := service.CreatePR(context.Background(), CreatePRRequest{Title: "Pinned outdated identity", Worktree: dir})
+	originalSource := testGit(t, dir, "rev-parse", "refs/heads/feature")
+	originalBase := testGit(t, dir, "rev-parse", "refs/heads/main")
+	created, _, err := service.CommentPR2(context.Background(), pr.ID, ThreadCommentRequest{File: "sample.txt", LineStart: 2, Text: "keep identity"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	threadID := created.Threads[0].ID
+	testGit(t, dir, "reset", "--hard", "refs/heads/main")
+	writeTestFile(t, dir, "other.txt", "replacement\n")
+	testGit(t, dir, "add", "-A")
+	testGit(t, dir, "commit", "-m", "replace source history")
+	report, err := service.ReviewPR(context.Background(), pr.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	judged, _, err := service.ApprovePR(context.Background(), pr.ID, ExpectedHeads{Source: report.Basis.SourceHeadSHA, Base: report.Basis.BaseHeadSHA})
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchor := judged.Threads[0].Anchor
+	if !judged.Threads[0].Outdated || anchor.SourceHeadSHA != originalSource || anchor.BaseHeadSHA != originalBase {
+		t.Fatalf("outdated anchor=%#v thread=%#v", anchor, judged.Threads[0])
+	}
+	for _, pair := range []struct{ leaf, want string }{{"head", originalSource}, {"base", originalBase}} {
+		ref := "refs/gitpr/pr/" + pr.ID + "/anchors/" + threadID + "/" + pair.leaf
+		if got := testGit(t, dir, "rev-parse", ref); got != pair.want {
+			t.Fatalf("%s=%s want %s", ref, got, pair.want)
+		}
+	}
+	testGit(t, dir, "reflog", "expire", "--expire=now", "--all")
+	testGit(t, dir, "gc", "--prune=now", "--aggressive")
+	if got := testGit(t, dir, "cat-file", "-t", originalSource); got != "commit" {
+		t.Fatalf("original source object type=%q", got)
+	}
+}
+
+func TestMapUnchangedRangeUsesInclusiveThresholdAfterEdgeTrim(t *testing.T) {
+	atLimit := make([]string, remapLineLimit+1)
+	for i := 0; i < remapLineLimit; i++ {
+		atLimit[i] = "removed"
+	}
+	atLimit[remapLineLimit] = "anchor"
+	if start, end, ok := mapUnchangedRange(atLimit, []string{"anchor"}, remapLineLimit+1, remapLineLimit+1); !ok || start != 1 || end != 1 {
+		t.Fatalf("at limit=(%d,%d,%v)", start, end, ok)
+	}
+	above := append([]string{"removed"}, atLimit...)
+	if _, _, ok := mapUnchangedRange(above, []string{"anchor"}, len(above), len(above)); ok {
+		t.Fatal("range above remap threshold was mapped")
+	}
+}
+
 func TestVerdictRemapsEveryThreadButPRLevelNeverOutdates(t *testing.T) {
 	dir, service := newBranchService(t)
 	pr, _, _ := service.CreatePR(context.Background(), CreatePRRequest{Title: "Verdict remap", Worktree: dir})
