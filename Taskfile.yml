@@ -32,15 +32,29 @@ tasks:
     cmds:
       - tagver --format json
 
+  fmt:check:
+    desc: Fail and name any tracked Go file that is not gofmt-formatted
+    cmds:
+      - |
+        files="$(gofmt -l .)"
+        if [ -n "$files" ]; then
+          echo "gofmt: the following files are not formatted:" >&2
+          echo "$files" >&2
+          exit 1
+        fi
+    silent: true
+
   test:
     desc: Run the Go test suite
+    deps:
+      - fmt:check
     cmds:
       - go test -tags=test ./...
 
   check:
     desc: Run formatting, static analysis, and tests
     cmds:
-      - test -z "$(gofmt -l .)"
+      - task: fmt:check
       - go vet -tags=test ./...
       - go test -tags=test ./...
 

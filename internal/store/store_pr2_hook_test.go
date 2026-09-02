@@ -22,7 +22,7 @@ func TestSavePR2EventAppendIsAtomicOnInterleavedConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	loser, staleVersion, err := losingStore.LoadPR2(pr.ID)
+	loser, staleVersion, err := losingStore.LoadPR(pr.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestSavePR2EventAppendIsAtomicOnInterleavedConflict(t *testing.T) {
 	loser.Threads = []model.Thread{losingAnchorThread(base, head)}
 
 	losingStore.SetBeforeSaveHook(func() {
-		winner, version, loadErr := winnerStore.LoadPR2(pr.ID)
+		winner, version, loadErr := winnerStore.LoadPR(pr.ID)
 		if loadErr != nil {
 			t.Fatal(loadErr)
 		}
@@ -45,7 +45,7 @@ func TestSavePR2EventAppendIsAtomicOnInterleavedConflict(t *testing.T) {
 	if _, err := losingStore.SavePR2(loser, model.PRStateOpen, staleVersion); !errors.Is(err, ErrMetadataConflict) {
 		t.Fatalf("losing append error = %v, want ErrMetadataConflict", err)
 	}
-	loaded, version, err := losingStore.LoadPR2(pr.ID)
+	loaded, version, err := losingStore.LoadPR(pr.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

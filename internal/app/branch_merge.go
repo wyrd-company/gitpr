@@ -11,24 +11,8 @@ import (
 	"github.com/wyrd-company/gitpr/internal/store"
 )
 
-func (s *Service) MergeRecord(ctx context.Context, id string, cleanup bool) (model.Record, string, error) {
-	record, _, err := s.store.LoadPR(id)
-	if err != nil {
-		return nil, "", err
-	}
-	if _, legacy := record.(model.PR); legacy {
-		pr, ref, err := s.MergePR(ctx, id, cleanup)
-		return pr, ref, err
-	}
-	pr, ref, err := s.mergeBranchPR(ctx, id, cleanup)
-	if err != nil && ref == "" {
-		return nil, "", err
-	}
-	return pr, ref, err
-}
-
-func (s *Service) mergeBranchPR(ctx context.Context, id string, cleanup bool) (model.PR2, string, error) {
-	pr, version, err := s.store.LoadPR2(id)
+func (s *Service) MergePR(ctx context.Context, id string, cleanup bool) (model.PR2, string, error) {
+	pr, version, err := s.store.LoadPR(id)
 	if err != nil {
 		return model.PR2{}, "", err
 	}

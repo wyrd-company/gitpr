@@ -67,9 +67,9 @@ proposed-design:
     ends as merged, or closed with a machine-readable reason.
 
   storage-model: >-
-    Metadata authority stays at refs/gitpr/pr/<id>/meta. A new record carries
+    Metadata authority stays at refs/gitpr/pr/<id>/meta. A record carries
     schema: 2 in its metadata; a record without the field is a legacy snapshot
-    and is read through the existing code path unchanged. A review event is a
+    and is refused, not read. A review event is a
     fixed-size header in the metadata document — event id, source_head_sha,
     base_head_sha, merge_base_sha, verdict, timestamp, predecessor event id —
     pinned by per-event refs refs/gitpr/pr/<id>/events/<event-id>/{head,base}
@@ -88,14 +88,13 @@ proposed-design:
     and its post-closure marker when written after closure. An
     event's diff is not stored: it is recomputed on demand from the two
     pinned commits, so the metadata document stays bounded by event count,
-    not diff size. New-model status indexes are
+    not diff size. Status indexes are
     refs/gitpr/index/<state>/<id> with state segments open, merged, and
     closed; the closure reason lives in the metadata, and reason-scoped
     listing loads the closed records' metadata (bounded by the closed count
-    at gitpr's scale). Legacy segments open, approved, and rejected remain
-    untouched. All metadata writes go through the concurrency-safe
-    compare-and-swap store primitive specified by kanban 574, which is a
-    prerequisite of this design's implementation.
+    at gitpr's scale). No other state segment is served. All metadata writes
+    go through the concurrency-safe compare-and-swap store primitive specified
+    by kanban 574, which is a prerequisite of this design's implementation.
 
   status-vocabulary: >-
     Review events terminate in exactly two states: accepted or rejected. The
@@ -220,27 +219,20 @@ proposed-design:
     that every verdict predates it.
 
   command-surface: >-
-    Verbs that take a PR id load the record and dispatch on its schema; a
-    verb with no meaning for the record's shape refuses with an error naming
-    the distinction. create takes no id and always creates a new-model,
-    branch-scoped PR without freezing a snapshot; no verb creates a legacy
-    record. The new-model-only id verbs — approve (verdict, creating the
-    event atomically), close (ends the PR with a required reason and
-    evidence), resolve and reopen (thread state) — refuse legacy ids.
-    review is a pure read: it computes the review basis — heads, merge
-    base, diff, base-containment — and the interdiff against the latest
-    event, and persists nothing. The shared, schema-dispatched verbs —
-    show, list, comments, comment, delete, merge, and reject — operate on
-    both shapes: on a legacy id, merge and reject keep their existing
-    snapshot behavior; on a new-model id, merge is the gated
-    compare-and-swap integration and reject records a rejected event.
-    refresh is legacy-only and keeps its existing behavior; it has no
-    new-model counterpart because base containment is computed by review,
-    not stored. list renders both shapes: legacy records list under their
-    own vocabulary (open, approved, rejected) and new records under theirs
-    (open, merged, closed with reason); state filters accept both
-    vocabularies and never conflate them — a merged filter does not include
-    legacy approved.
+    Verbs that take a PR id load the record and dispatch on its schema
+    discriminator: schema 2 is served, a schema the binary does not know is
+    refused as unsupported, and an absent schema is refused as a legacy
+    record with an error naming the documented raw-git retrieval and removal
+    path. create takes no id and creates a branch-scoped PR without freezing
+    a snapshot. approve creates an accepted event atomically; close ends the
+    PR with a required reason and evidence; resolve and reopen carry thread
+    state; merge is the gated compare-and-swap integration and reject records
+    a rejected event. review is a pure read: it computes the review basis —
+    heads, merge base, diff, base-containment — and the interdiff against the
+    latest event, and persists nothing. Base containment is computed by
+    review rather than stored, so no verb refreshes it. list serves one
+    vocabulary — open, merged, and closed with reason — refuses any other
+    state filter, and skips records it cannot read with a visible count.
 
   retention: >-
     Nothing drops from storage at closure. list defaults to open PRs so the
@@ -250,12 +242,14 @@ proposed-design:
     never ordinary closure.
 
   backward-compatibility: >-
-    Legacy snapshot records keep their vocabulary (open, approved, rejected)
-    and their verbs, without reinterpretation into the new model: whether a
-    legacy approved snapshot was merged is unknowable after the fact, so no
-    mapping is fabricated. Legacy records remain readable, listable, and
-    operable through the existing paths for the life of the tool. New records
-    are created only in the new model. Nothing rewrites a legacy record.
+    There is none, and none is offered. A legacy snapshot is not reinterpreted
+    into this model — whether a legacy approved snapshot was merged is
+    unknowable after the fact, so no mapping is fabricated — and it is not
+    read either. Every id verb refuses a schema-absent record with one error
+    naming the documented retrieval and removal commands, and list skips it
+    with a count. In-flight work is recreated with create; the old record is
+    removed by hand with raw git. Nothing rewrites a legacy record, because
+    nothing writes one at all.
 
   adjacent-work-reconciliation: >-
     The interim source-head merge guard (kanban 88, shipped) is absorbed by
@@ -267,18 +261,13 @@ proposed-design:
     gate and the compare-and-swap; implementing it on the current model
     remains worthwhile before this design ships, and its diagnostics carry
     over the same way. The stale-SHA-after-rebase defect (kanban 212) is
-    absorbed in part: its diagnostic scope loses its premise here because
-    rebase becomes ordinary movement, and its unanchored-disposition scope
-    is absorbed by PR-level threads for records created in the new model —
-    legacy records never gain them, so dispositions on already-stranded
-    legacy snapshots keep needing 212's interim relief; on the current
-    model only a diagnostic-level interim fix is safe before the reshape.
-    Comments after closure (kanban 152) and honest closure (kanban 157) are
-    absorbed by the comment lifecycle and the closure vocabulary for every
-    record created after the reshape; because nothing rewrites a legacy
-    record, the snapshots already stranded in an open or false status stay
-    as they are, and correcting or retiring those specific records remains
-    interim work under 157 and the delete verb, outside this reshape.
+    absorbed: its diagnostic scope loses its premise here because rebase
+    becomes ordinary movement, and its unanchored-disposition scope is
+    absorbed by PR-level threads. Comments after closure (kanban 152) and
+    honest closure (kanban 157) are absorbed by the comment lifecycle and the
+    closure vocabulary. A snapshot stranded in an open or false status is not
+    corrected in place: it is recreated here and removed with the documented
+    commands.
     Interim implementations of the two features themselves are not
     recommended because they would build on surfaces this design replaces.
     The approve alias removal (kanban 240) is interim containment

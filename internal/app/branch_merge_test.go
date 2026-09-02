@@ -17,7 +17,7 @@ import (
 func TestMergePR2AtomicallyAdvancesBaseAndRecord(t *testing.T) {
 	dir, service, pr, event := newAcceptedBranchPR(t)
 	baseBefore := event.BaseHeadSHA
-	merged, ref, err := service.mergeBranchPR(context.Background(), pr.ID, false)
+	merged, ref, err := service.MergePR(context.Background(), pr.ID, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,10 +39,10 @@ func TestMergePR2AtomicallyAdvancesBaseAndRecord(t *testing.T) {
 func TestMergePR2LatestRejectedEventBlocksOlderAcceptance(t *testing.T) {
 	_, service, pr, event := newAcceptedBranchPR(t)
 	heads := ExpectedHeads{Source: event.SourceHeadSHA, Base: event.BaseHeadSHA}
-	if _, _, err := service.RejectRecord(context.Background(), pr.ID, &heads); err != nil {
+	if _, _, err := service.RejectPR(context.Background(), pr.ID, &heads); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := service.mergeBranchPR(context.Background(), pr.ID, false)
+	_, _, err := service.MergePR(context.Background(), pr.ID, false)
 	if err == nil || !strings.Contains(err.Error(), "latest") || !strings.Contains(err.Error(), "rejected") || !strings.Contains(err.Error(), "new accepted event") {
 		t.Fatalf("rejected-latest error = %v", err)
 	}
@@ -51,29 +51,29 @@ func TestMergePR2LatestRejectedEventBlocksOlderAcceptance(t *testing.T) {
 func TestMergePR2RefusesPRWithoutReviewEvent(t *testing.T) {
 	dir, service := newBranchService(t)
 	pr, _, _ := service.CreatePR(context.Background(), CreatePRRequest{Title: "No verdict", Worktree: dir})
-	if _, _, err := service.mergeBranchPR(context.Background(), pr.ID, false); err == nil || !strings.Contains(err.Error(), "accepted event") {
+	if _, _, err := service.MergePR(context.Background(), pr.ID, false); err == nil || !strings.Contains(err.Error(), "accepted event") {
 		t.Fatalf("no-event error = %v", err)
 	}
 }
 
-func TestMergeRecordReturnsNilRecordOnPreCommitRefusal(t *testing.T) {
+func TestMergePRReturnsNoRefOnPreCommitRefusal(t *testing.T) {
 	dir, service := newBranchService(t)
 	pr, _, _ := service.CreatePR(context.Background(), CreatePRRequest{Title: "Refusal", Worktree: dir})
-	record, ref, err := service.MergeRecord(context.Background(), pr.ID, false)
-	if err == nil || record != nil || ref != "" {
+	record, ref, err := service.MergePR(context.Background(), pr.ID, false)
+	if err == nil || record.ID != "" || ref != "" {
 		t.Fatalf("refusal result = %#v, ref=%q, err=%v", record, ref, err)
 	}
 }
 
 func TestMergePR2RefusesTerminalRecord(t *testing.T) {
 	_, service, pr, _ := newAcceptedBranchPR(t)
-	stored, version, _ := service.store.LoadPR2(pr.ID)
+	stored, version, _ := service.store.LoadPR(pr.ID)
 	stored.State = model.PRStateClosed
 	stored.Closure = &model.Closure{Reason: model.ClosureAbandoned}
 	if _, err := service.store.SavePR2(stored, model.PRStateOpen, version); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := service.mergeBranchPR(context.Background(), pr.ID, false); err == nil || !strings.Contains(err.Error(), "only open") {
+	if _, _, err := service.MergePR(context.Background(), pr.ID, false); err == nil || !strings.Contains(err.Error(), "only open") {
 		t.Fatalf("terminal merge error = %v", err)
 	}
 }
@@ -107,7 +107,7 @@ func TestMergePR2RefusesSideSpecificLiveHeadFailures(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir, service, pr, _ := newAcceptedBranchPR(t)
 			tt.mutate(t, dir)
-			_, _, err := service.mergeBranchPR(context.Background(), pr.ID, false)
+			_, _, err := service.MergePR(context.Background(), pr.ID, false)
 			if err == nil {
 				t.Fatal("merge error = nil")
 			}
@@ -116,7 +116,7 @@ func TestMergePR2RefusesSideSpecificLiveHeadFailures(t *testing.T) {
 					t.Errorf("error %q missing %q", err, want)
 				}
 			}
-			loaded, _, _ := service.store.LoadPR2(pr.ID)
+			loaded, _, _ := service.store.LoadPR(pr.ID)
 			if loaded.State != model.PRStateOpen {
 				t.Fatalf("state = %s", loaded.State)
 			}
@@ -150,7 +150,7 @@ func TestMergePR2RefusesDivergedAndEqualReviewPairs(t *testing.T) {
 			if _, _, err := service.ApprovePR(context.Background(), pr.ID, heads); err != nil {
 				t.Fatal(err)
 			}
-			_, _, err = service.mergeBranchPR(context.Background(), pr.ID, false)
+			_, _, err = service.MergePR(context.Background(), pr.ID, false)
 			if err == nil || !strings.Contains(err.Error(), "recorded") || (!strings.Contains(err.Error(), "fast-forward") && !strings.Contains(err.Error(), "strict")) {
 				t.Fatalf("ancestry error = %v", err)
 			}
@@ -162,7 +162,7 @@ func TestMergePR2RefreshesSingleCleanBaseWorktree(t *testing.T) {
 	dir, service, pr, event := newAcceptedBranchPR(t)
 	basePath := filepath.Join(t.TempDir(), "base")
 	testGit(t, dir, "worktree", "add", basePath, "main")
-	if _, _, err := service.mergeBranchPR(context.Background(), pr.ID, false); err != nil {
+	if _, _, err := service.MergePR(context.Background(), pr.ID, false); err != nil {
 		t.Fatal(err)
 	}
 	if got := testGit(t, basePath, "rev-parse", "HEAD"); got != event.SourceHeadSHA {
@@ -180,7 +180,7 @@ func TestMergePR2RefusesMultipleOrDirtyBaseWorktrees(t *testing.T) {
 		second := filepath.Join(t.TempDir(), "base-two")
 		testGit(t, dir, "worktree", "add", first, "main")
 		testGit(t, dir, "worktree", "add", "--force", second, "main")
-		if _, _, err := service.mergeBranchPR(context.Background(), pr.ID, false); err == nil || !strings.Contains(err.Error(), "multiple worktrees") {
+		if _, _, err := service.MergePR(context.Background(), pr.ID, false); err == nil || !strings.Contains(err.Error(), "multiple worktrees") {
 			t.Fatalf("multiple error = %v", err)
 		}
 	})
@@ -189,7 +189,7 @@ func TestMergePR2RefusesMultipleOrDirtyBaseWorktrees(t *testing.T) {
 		basePath := filepath.Join(t.TempDir(), "base")
 		testGit(t, dir, "worktree", "add", basePath, "main")
 		writeTestFile(t, basePath, "dirty.txt", "dirty\n")
-		if _, _, err := service.mergeBranchPR(context.Background(), pr.ID, false); err == nil || !strings.Contains(err.Error(), "dirty") || !strings.Contains(err.Error(), basePath) {
+		if _, _, err := service.MergePR(context.Background(), pr.ID, false); err == nil || !strings.Contains(err.Error(), "dirty") || !strings.Contains(err.Error(), basePath) {
 			t.Fatalf("dirty error = %v", err)
 		}
 	})
@@ -214,11 +214,11 @@ func TestMergePR2ExternalBaseLeaseIsAtomicAndRetryable(t *testing.T) {
 			t.Fatalf("lease response = %q, %v; want %q", line, err, want)
 		}
 	}
-	_, _, err := service.mergeBranchPR(context.Background(), pr.ID, false)
+	_, _, err := service.MergePR(context.Background(), pr.ID, false)
 	if err == nil || !errors.Is(err, store.ErrMergeConflict) {
 		t.Fatalf("leased merge error = %v", err)
 	}
-	loaded, _, _ := service.store.LoadPR2(pr.ID)
+	loaded, _, _ := service.store.LoadPR(pr.ID)
 	if loaded.State != model.PRStateOpen || testGit(t, dir, "rev-parse", "refs/heads/main") != event.BaseHeadSHA {
 		t.Fatalf("lease failure left partial merge: %#v", loaded)
 	}
@@ -229,7 +229,7 @@ func TestMergePR2ExternalBaseLeaseIsAtomicAndRetryable(t *testing.T) {
 	if err := cmd.Wait(); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := service.mergeBranchPR(context.Background(), pr.ID, false); err != nil {
+	if _, _, err := service.MergePR(context.Background(), pr.ID, false); err != nil {
 		t.Fatalf("retry after lease: %v", err)
 	}
 }
@@ -257,7 +257,7 @@ func TestMergePR2CleanupRemovesRecordedSourceWorktreeAndBranch(t *testing.T) {
 	if _, _, err := service.ApprovePR(context.Background(), pr.ID, heads); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := service.mergeBranchPR(context.Background(), pr.ID, true); err != nil {
+	if _, _, err := service.MergePR(context.Background(), pr.ID, true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(featurePath); !os.IsNotExist(err) {
@@ -270,12 +270,12 @@ func TestMergePR2CleanupRemovesRecordedSourceWorktreeAndBranch(t *testing.T) {
 
 func TestMergePR2CleanupFailureReportsCompletedMerge(t *testing.T) {
 	dir, service, pr, event := newAcceptedBranchPR(t)
-	stored, version, _ := service.store.LoadPR2(pr.ID)
+	stored, version, _ := service.store.LoadPR(pr.ID)
 	stored.SourceWorktreePath = filepath.Join(t.TempDir(), "missing-source")
 	if _, err := service.store.SavePR2(stored, stored.State, version); err != nil {
 		t.Fatal(err)
 	}
-	merged, ref, err := service.mergeBranchPR(context.Background(), pr.ID, true)
+	merged, ref, err := service.MergePR(context.Background(), pr.ID, true)
 	if err == nil || merged.State != model.PRStateMerged || ref == "" || !strings.Contains(err.Error(), "merge succeeded") || !strings.Contains(err.Error(), "cleanup failed") || !strings.Contains(err.Error(), stored.SourceWorktreePath) {
 		t.Fatalf("cleanup failure result = %#v, ref=%q, err=%v", merged, ref, err)
 	}

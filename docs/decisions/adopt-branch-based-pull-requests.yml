@@ -63,7 +63,8 @@ expected-outcomes:
     - Strict double-equality gating invalidates approvals on every base move,
       raising re-review frequency; the compensation is the interdiff-scoped
       re-review the review surface computes and offers, not a looser gate.
-    - Two record shapes coexist for the life of the tool, since legacy
-      snapshots stay readable without migration or reinterpretation.
+    - Legacy snapshot records become unreadable by the tool, so in-flight work
+      is recreated under this model and the old records are removed by hand
+      with documented raw-git commands. There is no migration path.
     - Anchor re-mapping across rebases adds the design's largest
       implementation complexity.

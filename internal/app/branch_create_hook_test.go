@@ -52,7 +52,7 @@ func TestConcurrentCreatePRClaimsOneOpenPair(t *testing.T) {
 	if successes != 1 || duplicates != 1 {
 		t.Fatalf("concurrent results: successes=%d duplicates=%d", successes, duplicates)
 	}
-	records, err := first.ListPRs("open")
+	records, _, err := first.ListPRs("open")
 	if err != nil {
 		t.Fatal(err)
 	}

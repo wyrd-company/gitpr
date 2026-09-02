@@ -8,17 +8,12 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/wyrd-company/gitpr/internal/model"
 	"github.com/wyrd-company/gitpr/internal/store"
 )
-
-type unknownRecord struct{}
-
-func (unknownRecord) RecordSchema() int          { return 99 }
-func (unknownRecord) RecordID() string           { return "unknown" }
-func (unknownRecord) RecordDisplayState() string { return "unknown" }
 
 func TestCreateAndReviewCommandsUseSchema2BasisYAML(t *testing.T) {
 	dir := newCLITestRepo(t)
@@ -39,7 +34,7 @@ func TestCreateAndReviewCommandsUseSchema2BasisYAML(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := st.LoadPR2(id); err != nil {
+		if _, _, err := st.LoadPR(id); err != nil {
 			t.Fatalf("created record is not schema 2: %v", err)
 		}
 	})
@@ -64,7 +59,7 @@ func TestReviewBasisCanBePastedIntoApproveCommandOnStdout(t *testing.T) {
 			t.Fatalf("approve stdout = %q", out)
 		}
 		st, _ := store.New(dir)
-		pr, _, _ := st.LoadPR2(id)
+		pr, _, _ := st.LoadPR(id)
 		if len(pr.Events) != 1 || pr.Events[0].Verdict != model.VerdictAccepted || pr.Events[0].SourceHeadSHA != source || pr.Events[0].BaseHeadSHA != base {
 			t.Fatalf("approved events = %#v", pr.Events)
 		}
@@ -120,35 +115,14 @@ func TestBranchCommentThreadCommandsAndAnchorRefsUseStdout(t *testing.T) {
 	})
 }
 
-func TestLegacyCommentsOutputRemainsByteIdentical(t *testing.T) {
-	dir := newCLITestRepo(t)
-	withinDir(t, dir, func() {
-		st, err := store.New(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		head := cliGit(t, dir, "rev-parse", "HEAD")
-		base := cliGit(t, dir, "rev-parse", "refs/heads/main")
-		created := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
-		pr := model.PR{ID: "01LEGACYCOMMENTGOLDEN000000", Title: "Legacy discussion", SourceBranch: "feature", BaseBranch: "main", SourceHeadSHA: head, BaseHeadSHA: base, Status: model.StatusOpen, Comments: []model.Comment{{FilePath: "sample.txt", LineStart: 2, LineEnd: 2, Comment: "legacy body", CommitSHA: head, CreatedAt: created}}}
-		if _, err := st.SavePR(pr, "", ""); err != nil {
-			t.Fatal(err)
-		}
-		want := "id: 01LEGACYCOMMENTGOLDEN000000\ntitle: Legacy discussion\nstatus: open\ncomments:\n    - file_path: sample.txt\n      line_start: 2\n      line_end: 2\n      comment: legacy body\n      commit_sha: " + head + "\n      created_at: 2025-01-02T03:04:05Z\n"
-		if got := executeCLI(t, "comments", pr.ID); got != want {
-			t.Fatalf("legacy comments output:\n%s\nwant:\n%s", got, want)
-		}
-	})
-}
-
 func TestCommandHelpUsesBranchBasedSemanticsWithoutApproveMergeAlias(t *testing.T) {
 	root := newRootCmd()
 	checks := map[string][]string{
 		"create":  {"branch-based PR", "worktree branch"},
-		"comment": {"legacy comment", "branch-based thread"},
+		"comment": {"comment", "PR thread"},
 		"merge":   {"eligible PR", "base branch"},
-		"resolve": {"Resolve", "branch-based comment thread"},
-		"reopen":  {"Reopen", "branch-based comment thread"},
+		"resolve": {"Resolve", "PR comment thread"},
+		"reopen":  {"Reopen", "PR comment thread"},
 	}
 	for name, wants := range checks {
 		cmd, _, err := root.Find([]string{name})
@@ -189,18 +163,11 @@ func TestBranchBasedMergeCommandAdvancesBaseAndPrintsStdout(t *testing.T) {
 			t.Fatalf("base = %s, want %s", got, source)
 		}
 		st, _ := store.New(dir)
-		pr, _, _ := st.LoadPR2(id)
+		pr, _, _ := st.LoadPR(id)
 		if pr.State != model.PRStateMerged {
 			t.Fatalf("state = %s", pr.State)
 		}
 	})
-}
-
-func TestMergeResultRenderingRejectsUnknownRecordWithoutPanic(t *testing.T) {
-	cmd := newRootCmd()
-	if err := printMergeRecordSuccess(cmd, unknownRecord{}, "ref", false); err == nil || !strings.Contains(err.Error(), "unknownRecord") {
-		t.Fatalf("render error = %v", err)
-	}
 }
 
 func TestCloseReasonListingAndDeleteCommandsUseStdout(t *testing.T) {
@@ -254,7 +221,7 @@ func TestCloseReasonListingAndDeleteCommandsUseStdout(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := st.LoadPR2(id); err != nil {
+		if _, _, err := st.LoadPR(id); err != nil {
 			t.Fatalf("preview deleted record: %v", err)
 		}
 		if out := executeCLI(t, "delete", id, "--force"); !strings.Contains(out, "Deleted PR") {
@@ -284,46 +251,102 @@ func TestReasonMisuseNamesTheFilterFlagActuallySupplied(t *testing.T) {
 	})
 }
 
-func TestListAndShowRenderMixedShapesWhileLegacyOutputStaysStable(t *testing.T) {
+func TestListSkipsLegacyRecordsAndIDVerbsNameTheDocumentedPath(t *testing.T) {
 	dir := newCLITestRepo(t)
 	withinDir(t, dir, func() {
-		st, err := store.New(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		hash := exec.Command("git", "-C", dir, "hash-object", "-w", "--stdin")
-		if _, err := hash.Output(); err != nil {
-			t.Fatal(err)
-		}
-		const objectID = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
-		legacy := model.PR{ID: "01LEGACYCLIGOLDEN000000000", Title: "Legacy record", SourceBranch: "feature", BaseBranch: "main", SourceHeadSHA: objectID, BaseHeadSHA: objectID, Status: model.StatusOpen}
-		if _, err := st.SavePR(legacy, "", ""); err != nil {
-			t.Fatal(err)
-		}
-		legacyWant := "ID             STATUS     BRANCH               TITLE\n01LEGACYCLIG   open       feature              Legacy record\n"
-		if got := executeCLI(t, "list", "--status", "open"); got != legacyWant {
-			t.Fatalf("legacy list output changed\n got: %q\nwant: %q", got, legacyWant)
-		}
-		const legacyYAML = "id: 01LEGACYCLIGOLDEN000000000\ntitle: Legacy record\nsource_branch: feature\nsource_worktree_path: \"\"\nrepository_root: \"\"\nbase_branch: main\nsource_head_sha: e69de29bb2d1d6434b8b29ae775ad8c2e48c5391\nbase_head_sha: e69de29bb2d1d6434b8b29ae775ad8c2e48c5391\ndescription: \"\"\nfile_diffs: []\ncommits: []\nstatus: open\ncreated_at: 0001-01-01T00:00:00Z\nupdated_at: 0001-01-01T00:00:00Z\n"
-		if got := executeCLI(t, "show", legacy.ID); got != legacyYAML {
-			t.Fatalf("legacy show output changed\n got: %q\nwant: %q", got, legacyYAML)
+		legacyID := writeCLILegacyRecord(t, dir, "01LEGACYCLIRECORD000000000")
+
+		empty := executeCLI(t, "list", "--state", "open")
+		if !strings.Contains(empty, "No PRs found.") || !strings.Contains(empty, "Skipped 1") || !strings.Contains(empty, "Legacy records") {
+			t.Fatalf("empty list output = %q", empty)
 		}
 
-		createOut := executeCLI(t, "create", "--title", "Branch record")
-		id := strings.Fields(createOut)[2]
-		mixed := executeCLI(t, "list", "--status", "open")
-		for _, want := range []string{"Legacy record", "Branch record", "open"} {
-			if !strings.Contains(mixed, want) {
-				t.Errorf("mixed list missing %q:\n%s", want, mixed)
+		id := strings.Fields(executeCLI(t, "create", "--title", "Branch record"))[2]
+		listed := executeCLI(t, "list", "--state", "open")
+		if !strings.Contains(listed, "Branch record") || strings.Contains(listed, legacyID[:12]) {
+			t.Fatalf("list rendered a legacy record:\n%s", listed)
+		}
+		if !strings.Contains(listed, "Skipped 1") || !strings.Contains(listed, "docs/usage.md") {
+			t.Fatalf("list did not report the skipped legacy record:\n%s", listed)
+		}
+
+		for _, args := range [][]string{{"show", legacyID}, {"comments", legacyID}, {"review", legacyID}, {"merge", legacyID}, {"delete", legacyID, "--force"}} {
+			cmd := newRootCmd()
+			cmd.SetArgs(args)
+			cmd.SetOut(new(bytes.Buffer))
+			cmd.SetErr(new(bytes.Buffer))
+			err := cmd.Execute()
+			if err == nil || !strings.Contains(err.Error(), "Legacy records") || !strings.Contains(err.Error(), "gitpr create") {
+				t.Errorf("gitpr %v error = %v, want the documented legacy guidance", args, err)
 			}
 		}
+
 		show := executeCLI(t, "show", id)
-		for _, want := range []string{"schema: 2", "state: open", "source_branch: feature", "source_worktree_path:"} {
+		for _, want := range []string{"schema: 2", "state: open", "source_branch: feature", "thread_summary:"} {
 			if !strings.Contains(show, want) {
-				t.Errorf("schema-2 show missing %q:\n%s", want, show)
+				t.Errorf("show missing %q:\n%s", want, show)
 			}
 		}
 	})
+}
+
+func TestListFiltersRefuseTheLegacyVocabulary(t *testing.T) {
+	dir := newCLITestRepo(t)
+	withinDir(t, dir, func() {
+		for _, state := range []string{"approved", "rejected"} {
+			cmd := newRootCmd()
+			cmd.SetArgs([]string{"list", "--state", state})
+			cmd.SetOut(new(bytes.Buffer))
+			cmd.SetErr(new(bytes.Buffer))
+			if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "unsupported status filter") {
+				t.Errorf("gitpr list --state %s error = %v, want an unsupported-filter refusal", state, err)
+			}
+		}
+	})
+}
+
+func TestRemovedLegacyVerbsAndFlagsAreAbsent(t *testing.T) {
+	root := newRootCmd()
+	if cmd, _, err := root.Find([]string{"refresh"}); err == nil && cmd.Name() == "refresh" {
+		t.Error("refresh command is still registered")
+	}
+	comment, _, err := root.Find([]string{"comment"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, flag := range []string{"update", "commit"} {
+		if comment.Flags().Lookup(flag) != nil {
+			t.Errorf("comment still exposes --%s", flag)
+		}
+	}
+}
+
+func writeCLILegacyRecord(t *testing.T, dir, id string) string {
+	t.Helper()
+	head := cliGit(t, dir, "rev-parse", "HEAD")
+	document := "id: " + id + "\ntitle: legacy snapshot\nsource_branch: feature\nbase_branch: main\n" +
+		"source_head_sha: " + head + "\nbase_head_sha: " + head + "\nstatus: open\n"
+	blob := cliGitStdin(t, dir, document, "hash-object", "-w", "--stdin")
+	tree := cliGitStdin(t, dir, "100644 blob "+blob+"\tpr.yaml\n", "mktree")
+	commit := cliGitStdin(t, dir, "", "commit-tree", tree, "-m", "legacy record")
+	cliGit(t, dir, "update-ref", "refs/gitpr/pr/"+id+"/meta", commit)
+	cliGit(t, dir, "update-ref", "refs/gitpr/index/open/"+id, commit)
+	return id
+}
+
+func cliGitStdin(t *testing.T, dir, stdin string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git %s: %s: %v", strings.Join(args, " "), strings.TrimSpace(stderr.String()), err)
+	}
+	return strings.TrimSpace(stdout.String())
 }
 
 func TestMainRoutesCommandDataToStdout(t *testing.T) {
@@ -430,4 +453,163 @@ func cliGit(t *testing.T, dir string, args ...string) string {
 		t.Fatalf("git %s: %s: %v", strings.Join(args, " "), strings.TrimSpace(string(out)), err)
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// TestDocumentedLegacyCommandsEnumerateAndRemoveARecord executes the shell
+// blocks the refusal error points people at, so the prose and the behavior
+// cannot drift apart.
+func TestDocumentedLegacyCommandsEnumerateAndRemoveARecord(t *testing.T) {
+	for _, doc := range []string{"../../docs/usage.md", "../../README.md"} {
+		t.Run(doc, func(t *testing.T) {
+			enumerate := documentedShellBlock(t, doc, "for-each-ref", "schema:")
+			remove := documentedShellBlock(t, doc, "update-ref -d")
+
+			dir := newCLITestRepo(t)
+			legacyID := writeCLILegacyRecord(t, dir, "01LEGACYDOCCOMMANDS0000000")
+			var keptID string
+			withinDir(t, dir, func() {
+				keptID = strings.Fields(executeCLI(t, "create", "--title", "Kept record"))[2]
+			})
+
+			listed := runShell(t, dir, enumerate)
+			if listed != "refs/gitpr/pr/"+legacyID+"/meta" {
+				t.Fatalf("documented enumeration = %q, want the legacy meta ref only", listed)
+			}
+
+			// A nested pin proves the documented pattern reaches deeper than one
+			// path component; a single-star glob silently matches only meta.
+			nested := "refs/gitpr/pr/" + legacyID + "/events/01NESTEDEVENTPIN0000000000/head"
+			cliGit(t, dir, "update-ref", nested, cliGit(t, dir, "rev-parse", "HEAD"))
+
+			runShell(t, dir, strings.ReplaceAll(remove, "<id>", legacyID))
+			if refs := cliGit(t, dir, "for-each-ref", "--format=%(refname)", "refs/gitpr/pr/"+legacyID, "refs/gitpr/index/*/"+legacyID); refs != "" {
+				t.Fatalf("documented removal left refs: %q", refs)
+			}
+			if refs := cliGit(t, dir, "for-each-ref", "--format=%(refname)", "refs/gitpr/pr/"+keptID+"/meta"); refs == "" {
+				t.Fatal("documented removal also removed the branch-based record")
+			}
+		})
+	}
+}
+
+func documentedShellBlock(t *testing.T, path string, required ...string) string {
+	t.Helper()
+	source, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sections := strings.Split(string(source), "## Legacy records")
+	if len(sections) != 2 {
+		t.Fatalf("%s has no single \"Legacy records\" section", path)
+	}
+	for _, block := range strings.Split(sections[1], "```") {
+		if !strings.HasPrefix(block, "bash\n") {
+			continue
+		}
+		body := strings.TrimPrefix(block, "bash\n")
+		matched := true
+		for _, want := range required {
+			if !strings.Contains(body, want) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return body
+		}
+	}
+	t.Fatalf("%s has no documented shell block containing %v", path, required)
+	return ""
+}
+
+func runShell(t *testing.T, dir, script string) string {
+	t.Helper()
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Dir = dir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("documented command failed: %s\n%s: %v", script, stderr.String(), err)
+	}
+	return strings.TrimSpace(stdout.String())
+}
+
+// idCommandInvocations names the arguments each registered PR-id command needs
+// to reach its record load. TestEveryRegisteredIDCommandRefusesALegacyRecord
+// asserts this map covers the command tree exactly, so a new id verb cannot be
+// added without deciding how it treats a legacy record.
+func idCommandInvocations(t *testing.T, legacyID string) map[string][]string {
+	t.Helper()
+	const sourceHead = "0123456789abcdef0123456789abcdef01234567"
+	const baseHead = "89abcdef0123456789abcdef0123456789abcdef"
+	return map[string][]string{
+		"show":         {"show", legacyID},
+		"comments":     {"comments", legacyID},
+		"review":       {"review", legacyID},
+		"approve":      {"approve", legacyID, "--basis", sourceHead + ":" + baseHead},
+		"reject":       {"reject", legacyID, "--basis", sourceHead + ":" + baseHead},
+		"merge":        {"merge", legacyID},
+		"comment":      {"comment", legacyID, "--pr-level", "--text", "refused"},
+		"resolve":      {"resolve", legacyID, "01THREADIDNOTREACHED000000"},
+		"reopen":       {"reopen", legacyID, "01THREADIDNOTREACHED000000"},
+		"close":        {"close", legacyID, "--reason", "abandoned"},
+		"edit":         {"edit", legacyID, "--title", "refused"},
+		"delete":       {"delete", legacyID, "--force"},
+		"debug export": {"debug", "export", legacyID, "--to", t.TempDir()},
+	}
+}
+
+func TestEveryRegisteredIDCommandRefusesALegacyRecord(t *testing.T) {
+	dir := newCLITestRepo(t)
+	withinDir(t, dir, func() {
+		legacyID := writeCLILegacyRecord(t, dir, "01LEGACYREGISTRYSWEEP00000")
+		before := cliGit(t, dir, "show", "refs/gitpr/pr/"+legacyID+"/meta:pr.yaml")
+		invocations := idCommandInvocations(t, legacyID)
+
+		registered := map[string]struct{}{}
+		var walk func(cmd *cobra.Command, prefix string)
+		walk = func(cmd *cobra.Command, prefix string) {
+			for _, child := range cmd.Commands() {
+				name := strings.TrimSpace(prefix + " " + child.Name())
+				if strings.Contains(child.Use, "pr-id") {
+					registered[name] = struct{}{}
+				}
+				walk(child, name)
+			}
+		}
+		walk(newRootCmd(), "")
+
+		for name := range registered {
+			if _, covered := invocations[name]; !covered {
+				t.Errorf("command %q takes a PR id but is not exercised against a legacy record", name)
+			}
+		}
+		for name := range invocations {
+			if _, exists := registered[name]; !exists {
+				t.Errorf("invocation %q names no registered PR-id command", name)
+			}
+		}
+
+		for name, args := range invocations {
+			cmd := newRootCmd()
+			cmd.SetArgs(args)
+			cmd.SetOut(new(bytes.Buffer))
+			cmd.SetErr(new(bytes.Buffer))
+			err := cmd.Execute()
+			if err == nil {
+				t.Errorf("gitpr %v succeeded on a legacy record", args)
+				continue
+			}
+			for _, want := range []string{"gitpr create", "update-ref -d", "github.com/wyrd-company/gitpr"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%s refusal %q is missing %q", name, err, want)
+				}
+			}
+		}
+
+		if after := cliGit(t, dir, "show", "refs/gitpr/pr/"+legacyID+"/meta:pr.yaml"); after != before {
+			t.Fatalf("a refused command changed the legacy record\n before: %s\n after: %s", before, after)
+		}
+	})
 }

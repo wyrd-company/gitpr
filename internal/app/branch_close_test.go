@@ -2,13 +2,11 @@ package app
 
 import (
 	"context"
-	"errors"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/wyrd-company/gitpr/internal/model"
-	"github.com/wyrd-company/gitpr/internal/store"
 )
 
 func TestClosePRPersistsEachReasonAndReleasesOpenOwnership(t *testing.T) {
@@ -33,7 +31,7 @@ func TestClosePRPersistsEachReasonAndReleasesOpenOwnership(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			loaded, _, _ := service.store.LoadPR2(pr.ID)
+			loaded, _, _ := service.store.LoadPR(pr.ID)
 			if closed.State != model.PRStateClosed || closed.ClosedAt == nil || loaded.Closure == nil || !reflect.DeepEqual(loaded.Closure, closed.Closure) {
 				t.Fatalf("closed record = %#v loaded=%#v", closed, loaded)
 			}
@@ -101,11 +99,7 @@ func TestClosePRRefusesSelfSupersessionAndInapplicableEvidence(t *testing.T) {
 	}
 }
 
-func TestClosePRRefusesLegacyAndTerminalRecords(t *testing.T) {
-	legacyService, legacy := newTestPR(t)
-	if _, _, err := legacyService.ClosePR(legacy.ID, ClosePRRequest{Reason: model.ClosureAbandoned}); err == nil || !strings.Contains(err.Error(), "branch-based") {
-		t.Fatalf("legacy close error=%v", err)
-	}
+func TestClosePRRefusesTerminalRecords(t *testing.T) {
 	dir, service := newBranchService(t)
 	pr, _, _ := service.CreatePR(context.Background(), CreatePRRequest{Title: "Terminal", Worktree: dir})
 	if _, _, err := service.ClosePR(pr.ID, ClosePRRequest{Reason: model.ClosureAbandoned}); err != nil {
@@ -127,7 +121,7 @@ func TestVerdictAndMergeRefuseClosedPR(t *testing.T) {
 	if _, _, err := service.ApprovePR(context.Background(), pr.ID, heads); err == nil || !strings.Contains(err.Error(), "only while open") {
 		t.Fatalf("approve after close=%v", err)
 	}
-	if _, _, err := service.MergeRecord(context.Background(), pr.ID, false); err == nil || !strings.Contains(err.Error(), "only open") {
+	if _, _, err := service.MergePR(context.Background(), pr.ID, false); err == nil || !strings.Contains(err.Error(), "only open") {
 		t.Fatalf("merge after close=%v", err)
 	}
 }
@@ -143,11 +137,11 @@ func TestListPRsWithReasonRequiresClosedStateAndFiltersMetadata(t *testing.T) {
 	if _, _, err := service.ClosePR(second.ID, ClosePRRequest{Reason: model.ClosureIntegrated, Destination: "release", Commits: []string{sha}}); err != nil {
 		t.Fatal(err)
 	}
-	records, err := service.ListPRsWithReason("closed", model.ClosureAbandoned)
-	if err != nil || len(records) != 1 || records[0].RecordID() != first.ID {
+	records, _, err := service.ListPRsWithReason("closed", model.ClosureAbandoned)
+	if err != nil || len(records) != 1 || records[0].ID != first.ID {
 		t.Fatalf("reason records=%#v err=%v", records, err)
 	}
-	if _, err := service.ListPRsWithReason("open", model.ClosureAbandoned); err == nil || !strings.Contains(err.Error(), "only with --state closed") {
+	if _, _, err := service.ListPRsWithReason("open", model.ClosureAbandoned); err == nil || !strings.Contains(err.Error(), "only with --state closed") {
 		t.Fatalf("open reason error=%v", err)
 	}
 }
@@ -160,7 +154,7 @@ func TestDeleteRecordRemovesCompleteSchema2NamespaceInEveryState(t *testing.T) {
 			case model.PRStateClosed:
 				_, _, _ = service.ClosePR(pr.ID, ClosePRRequest{Reason: model.ClosureAbandoned})
 			case model.PRStateMerged:
-				_, _, _ = service.mergeBranchPR(context.Background(), pr.ID, false)
+				_, _, _ = service.MergePR(context.Background(), pr.ID, false)
 			}
 			if err := service.DeleteRecord(pr.ID); err != nil {
 				t.Fatal(err)
@@ -172,7 +166,7 @@ func TestDeleteRecordRemovesCompleteSchema2NamespaceInEveryState(t *testing.T) {
 			if state == model.PRStateOpen && strings.Contains(refs, "refs/gitpr/openpair") {
 				t.Fatalf("openpair remains: %s", refs)
 			}
-			if _, _, err := service.store.LoadPR(pr.ID); err == nil || errors.Is(err, store.ErrRecordSchema) {
+			if _, _, err := service.store.LoadPR(pr.ID); err == nil || !strings.Contains(err.Error(), "not found") {
 				t.Fatalf("deleted load error=%v", err)
 			}
 		})

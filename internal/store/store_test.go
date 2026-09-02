@@ -9,8 +9,6 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
-
-	"github.com/wyrd-company/gitpr/internal/model"
 )
 
 func TestProductionStoreAPIExcludesBeforeSaveHook(t *testing.T) {
@@ -60,7 +58,7 @@ func TestRefConflictClassificationUsesStableSpecificMessages(t *testing.T) {
 }
 
 func TestResolveRefForLoadDistinguishesMissingRefFromGitFailure(t *testing.T) {
-	st, _ := newStoreTestPR(t)
+	st, _ := newStoreTestLegacyPR(t)
 	if _, exists, err := st.resolveRefForLoad("refs/gitpr/pr/missing/meta"); err != nil || exists {
 		t.Fatalf("missing ref: exists = %v, error = %v; want false, nil", exists, err)
 	}
@@ -104,70 +102,10 @@ func TestResolveRefForLoadUsesOneGitProcess(t *testing.T) {
 	}
 }
 
-func TestLoadPRReturnsMetadataCommitVersion(t *testing.T) {
-	st, pr := newStoreTestPR(t)
-
-	_, version, err := st.LoadLegacyPR(pr.ID)
-	if err != nil {
-		t.Fatalf("LoadPR() error = %v", err)
-	}
-	if version == st.metaRef(pr.ID) {
-		t.Fatalf("LoadPR() version = ref name %q, want commit SHA", version)
-	}
-	if got := storeTestGit(t, st.repo.CommonRoot, "rev-parse", st.metaRef(pr.ID)); got != version {
-		t.Fatalf("LoadPR() version = %s, metadata ref = %s", version, got)
-	}
-}
-
-func TestLegacyListNarrowingDropsNoRecordsBeforeSchema2CreateShips(t *testing.T) {
-	st, _ := newStoreTestPR(t)
-	records, err := st.ListPRs("open")
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacy, err := st.ListLegacyPRs("open")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(legacy) != len(records) {
-		t.Fatalf("temporary legacy narrowing dropped %d records; increment 6 must rewire service listing", len(records)-len(legacy))
-	}
-}
-
-func TestSavePRRejectsStaleMetadataVersionAndPreservesWinner(t *testing.T) {
-	stA, pr := newStoreTestPR(t)
-	stB, err := New(stA.repo.CommonRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	stale, staleVersion, err := stA.LoadLegacyPR(pr.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	winner, winnerVersion, err := stB.LoadLegacyPR(pr.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	winner.Title = "winner"
-	if _, err := stB.SavePR(winner, winner.Status, winnerVersion); err != nil {
-		t.Fatalf("winner SavePR() error = %v", err)
-	}
-
-	stale.Title = "loser"
-	if _, err := stA.SavePR(stale, stale.Status, staleVersion); !errors.Is(err, ErrMetadataConflict) {
-		t.Fatalf("stale SavePR() error = %v, want ErrMetadataConflict", err)
-	}
-	loaded, _, err := stA.LoadLegacyPR(pr.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if loaded.Title != "winner" {
-		t.Fatalf("stored title = %q, want winner", loaded.Title)
-	}
-}
-
-func newStoreTestPR(t *testing.T) (*Store, model.PR) {
+// newStoreTestLegacyPR builds a repository holding one schema-absent record.
+// The record is written with raw git plumbing because gitpr no longer has a
+// legacy write path.
+func newStoreTestLegacyPR(t *testing.T) (*Store, string) {
 	t.Helper()
 	repoPath := t.TempDir()
 	storeTestGit(t, repoPath, "init", "-b", "main")
@@ -179,11 +117,14 @@ func newStoreTestPR(t *testing.T) (*Store, model.PR) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pr := model.PR{ID: "01TESTMETADATACONFLICT", Title: "initial", SourceHeadSHA: head, BaseHeadSHA: head, Status: model.StatusOpen}
-	if _, err := st.SavePR(pr, "", ""); err != nil {
-		t.Fatalf("create SavePR() error = %v", err)
-	}
-	return st, pr
+	id := "01LEGACYSNAPSHOT0000000000"
+	writeRawPRRecord(t, st, id, "open", []byte(legacyRecordYAML(id, head)))
+	return st, id
+}
+
+func legacyRecordYAML(id, head string) string {
+	return "id: " + id + "\ntitle: legacy snapshot\nsource_branch: topic\nbase_branch: main\n" +
+		"source_head_sha: " + head + "\nbase_head_sha: " + head + "\nstatus: open\n"
 }
 
 func storeTestGit(t *testing.T, dir string, args ...string) string {

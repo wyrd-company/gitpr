@@ -22,14 +22,14 @@ func TestConcurrentBranchVerdictsRetryIntoOnePredecessorChain(t *testing.T) {
 	errA := make(chan error, 1)
 	go func() { _, _, err := serviceA.ApprovePR(context.Background(), pr.ID, heads); errA <- err }()
 	<-loaded
-	if _, _, err := serviceB.RejectRecord(context.Background(), pr.ID, &heads); err != nil {
+	if _, _, err := serviceB.RejectPR(context.Background(), pr.ID, &heads); err != nil {
 		t.Fatal(err)
 	}
 	close(release)
 	if err := <-errA; err != nil {
 		t.Fatal(err)
 	}
-	got, _, _ := serviceA.store.LoadPR2(pr.ID)
+	got, _, _ := serviceA.store.LoadPR(pr.ID)
 	if len(got.Events) != 2 {
 		t.Fatalf("events = %#v", got.Events)
 	}

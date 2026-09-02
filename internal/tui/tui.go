@@ -1,15 +1,12 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
-	"github.com/charmbracelet/bubbletea"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 
 	"github.com/wyrd-company/gitpr/internal/app"
@@ -23,91 +20,37 @@ const (
 	detailScreen
 )
 
-type mode int
-
-const (
-	modeBrowse mode = iota
-	modeCommentInput
-	modeConfirmReject
-	modeConfirmMerge
-	modeConfirmCleanup
-	modeInfo
-)
-
-type diffRow struct {
-	FilePath     string
-	IsHeader     bool
-	IsComment    bool
-	Header       string
-	OldLine      int
-	NewLine      int
-	LeftText     string
-	RightText    string
-	LeftKind     string
-	RightKind    string
-	CommentCount int
-	CommentKey   string
-	CommentMeta  string
-	CommentBody  string
-	LineStart    int
-	LineEnd      int
-}
-
 type prLoadedMsg struct {
-	record         model.Record
-	highlightCache map[string]fileHighlight
-	err            error
+	record model.PR2
+	err    error
 }
 
 type listLoadedMsg struct {
-	records []model.Record
+	records []model.PR2
+	skipped int
 	err     error
-}
-
-type actionResultMsg struct {
-	pr           model.PR
-	message      string
-	commentSaved bool
-	err          error
 }
 
 type Model struct {
 	svc *app.Service
 
 	screen screen
-	mode   mode
 
 	width  int
 	height int
 
-	openRecords         []model.Record
-	allRecords          []model.Record
-	showAll             bool
-	listCursor          int
-	currentPR           model.PR
-	currentPR2          *model.PR2
-	currentRows         []diffRow
-	highlightCache      map[string]fileHighlight
-	diffCursor          int
-	diffOffset          int
-	selectAnchor        int
-	expandedComments    map[string]bool
-	editingCommentIndex int
-	commentCycle        commentCycleState
-	inputBuffer         strings.Builder
-	infoMessage         string
-	errMessage          string
+	openRecords []model.PR2
+	allRecords  []model.PR2
+	skipped     int
+	showAll     bool
+	listCursor  int
+	currentPR   *model.PR2
+	infoMessage string
+	errMessage  string
 }
 
 func Run(svc *app.Service) error {
-	m := &Model{
-		svc:                 svc,
-		screen:              listScreen,
-		mode:                modeBrowse,
-		expandedComments:    map[string]bool{},
-		selectAnchor:        -1,
-		editingCommentIndex: -1,
-	}
+	m := &Model{svc: svc, screen: listScreen}
 
 	// Force a color-capable renderer for the TUI even when the parent shell is
 	// running with TERM=dumb/NO_COLOR. The review UI uses color as core signal.
@@ -153,7 +96,7 @@ func colorCapableEnv() []string {
 }
 
 func (m *Model) Init() tea.Cmd {
-	return m.loadOpenPRsCmd()
+	return m.loadPRsCmd()
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -168,28 +111,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errMessage = msg.err.Error()
 			return m, nil
 		}
-		m.currentPR = model.PR{}
-		m.currentPR2 = nil
-		m.expandedComments = map[string]bool{}
-		switch record := msg.record.(type) {
-		case model.PR:
-			m.currentPR = record
-			m.highlightCache = msg.highlightCache
-			m.rebuildRows()
-		case model.PR2:
-			m.currentPR2 = &record
-			m.currentRows = nil
-		default:
-			m.errMessage = fmt.Sprintf("unsupported record type %T", msg.record)
-			return m, nil
-		}
+		record := msg.record
+		m.currentPR = &record
 		m.screen = detailScreen
-		m.mode = modeBrowse
-		m.diffCursor = 0
-		m.diffOffset = 0
-		m.selectAnchor = -1
-		m.editingCommentIndex = -1
-		m.commentCycle = commentCycleState{}
 		m.infoMessage = ""
 		m.errMessage = ""
 		return m, nil
@@ -200,59 +124,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.allRecords = msg.records
+		m.skipped = msg.skipped
 		m.applyListMode()
-		if m.listCursor >= len(m.openRecords) && len(m.openRecords) > 0 {
-			m.listCursor = len(m.openRecords) - 1
-		}
-		if len(m.openRecords) == 0 {
-			m.listCursor = 0
-		}
 		m.errMessage = ""
 		m.infoMessage = ""
 		return m, nil
 
-	case actionResultMsg:
-		if msg.pr.ID != "" {
-			m.currentPR = msg.pr
-			m.rebuildRows()
-		}
-		if msg.err != nil {
-			m.errMessage = msg.err.Error()
-			m.mode = modeBrowse
-			if msg.pr.Status != model.StatusOpen && msg.pr.ID != "" {
-				m.screen = listScreen
-				return m, m.loadOpenPRsCmd()
-			}
-			return m, nil
-		}
-		m.infoMessage = msg.message
-		m.errMessage = ""
-		m.mode = modeBrowse
-		if msg.commentSaved {
-			m.editingCommentIndex = -1
-			m.commentCycle = commentCycleState{}
-		}
-		if m.currentPR.Status != model.StatusOpen {
-			m.screen = listScreen
-			return m, m.loadOpenPRsCmd()
-		}
-		return m, nil
-
 	case tea.KeyMsg:
-		switch m.mode {
-		case modeCommentInput:
-			return m.handleCommentInput(msg)
-		case modeConfirmReject:
-			return m.handleConfirm(msg, "reject")
-		case modeConfirmMerge:
-			return m.handleConfirm(msg, "merge")
-		case modeConfirmCleanup:
-			return m.handleConfirm(msg, "cleanup")
-		case modeInfo:
-			m.mode = modeBrowse
-			return m, nil
-		}
-
 		if m.screen == listScreen {
 			return m.handleListKeys(msg)
 		}
@@ -293,8 +171,7 @@ func (m *Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.openRecords) == 0 {
 			return m, nil
 		}
-		record := m.openRecords[m.listCursor]
-		return m, m.loadPRCmd(record.RecordID())
+		return m, m.loadPRCmd(m.openRecords[m.listCursor].ID)
 	case "a":
 		m.showAll = !m.showAll
 		m.applyListMode()
@@ -303,183 +180,14 @@ func (m *Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.currentPR2 != nil {
-		switch msg.String() {
-		case "ctrl+c", "q":
-			return m, tea.Quit
-		case "esc":
-			m.screen, m.mode, m.errMessage = listScreen, modeBrowse, ""
-			return m, m.loadOpenPRsCmd()
-		case "c", "r", "m":
-			m.infoMessage = "Branch-based PR actions use the CLI: gitpr review <id>, approve/reject with its basis, gitpr merge <id>, or gitpr comment <id>."
-		}
-		return m, nil
-	}
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
 	case "esc":
-		m.screen = listScreen
-		m.mode = modeBrowse
-		m.selectAnchor = -1
-		m.errMessage = ""
-		return m, m.loadOpenPRsCmd()
-	case "up", "k":
-		if m.diffCursor > 0 {
-			m.diffCursor--
-			m.adjustOffset()
-		}
-	case "down", "j":
-		if m.diffCursor < len(m.currentRows)-1 {
-			m.diffCursor++
-			m.adjustOffset()
-		}
-	case "pgup":
-		m.diffCursor -= m.visibleDiffHeight()
-		if m.diffCursor < 0 {
-			m.diffCursor = 0
-		}
-		m.adjustOffset()
-	case "pgdown":
-		m.diffCursor += m.visibleDiffHeight()
-		if m.diffCursor >= len(m.currentRows) {
-			m.diffCursor = len(m.currentRows) - 1
-		}
-		m.adjustOffset()
-	case "v":
-		if m.selectAnchor == -1 {
-			m.selectAnchor = m.diffCursor
-		} else {
-			m.selectAnchor = -1
-		}
-	case "c":
-		if m.currentPR.Status == model.StatusOpen {
-			target, ok := m.commentTarget()
-			if !ok {
-				m.errMessage = "Select a diff line before commenting."
-				return m, nil
-			}
-			m.mode = modeCommentInput
-			m.inputBuffer.Reset()
-			m.errMessage = ""
-			m.editingCommentIndex = -1
-
-			matches := commentsAtExactTarget(m.currentPR.Comments, target)
-			var isNew bool
-			m.commentCycle, m.editingCommentIndex, isNew = advanceCommentCycle(m.commentCycle, target, matches)
-			switch {
-			case isNew && len(matches) == 0:
-				m.infoMessage = "New comment: Enter adds a new line, Ctrl+S saves, Esc cancels."
-			case isNew:
-				m.infoMessage = "New comment at anchor (appends): Enter adds a new line, Ctrl+S saves, Esc cancels."
-			default:
-				for _, match := range matches {
-					if match.index == m.editingCommentIndex {
-						m.inputBuffer.WriteString(match.comment.Comment)
-						break
-					}
-				}
-				m.infoMessage = "Editing comment: Enter adds a new line, Ctrl+S saves, Esc cancels."
-			}
-		}
-	case "o":
-		if m.toggleCommentsForSelection() {
-			m.rebuildRows()
-		}
-	case "r":
-		if m.currentPR.Status == model.StatusOpen {
-			m.mode = modeConfirmReject
-			m.infoMessage = "Archive this PR as rejected? (y/n)"
-		}
-	case "m":
-		if m.currentPR.Status == model.StatusOpen {
-			if len(m.currentPR.MergeConflicts) > 0 {
-				m.errMessage = "Merge conflicts are present. Merge is blocked."
-				return m, nil
-			}
-			m.mode = modeConfirmMerge
-			m.infoMessage = "Merge this PR into the base branch now? (y/n)"
-		}
-	}
-	return m, nil
-}
-
-func (m *Model) handleCommentInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		m.mode = modeBrowse
-		m.infoMessage = ""
-		m.editingCommentIndex = -1
-		m.commentCycle = commentCycleState{}
-		return m, nil
-	case "backspace":
-		current := []rune(m.inputBuffer.String())
-		if len(current) > 0 {
-			m.inputBuffer.Reset()
-			m.inputBuffer.WriteString(string(current[:len(current)-1]))
-		}
-		return m, nil
-	case "ctrl+s":
-		target, ok := m.commentTarget()
-		if !ok {
-			m.errMessage = "Select a diff line before commenting."
-			m.mode = modeBrowse
-			return m, nil
-		}
-
-		comment := model.Comment{
-			FilePath:  target.filePath,
-			LineStart: target.lineStart,
-			LineEnd:   target.lineEnd,
-			Comment:   m.inputBuffer.String(),
-			CommitSHA: latestCommitSHA(m.currentPR),
-		}
-
-		m.mode = modeBrowse
-		m.inputBuffer.Reset()
-		commentIndex := m.editingCommentIndex
-		m.editingCommentIndex = -1
-		return m, m.addCommentCmd(m.currentPR.ID, comment, commentIndex)
-	case "enter":
-		m.inputBuffer.WriteString("\n")
-		return m, nil
-	case "space", " ":
-		m.inputBuffer.WriteString(" ")
-		return m, nil
-	case "tab":
-		m.inputBuffer.WriteString("\t")
-		return m, nil
-	default:
-		if msg.Type == tea.KeySpace {
-			m.inputBuffer.WriteString(" ")
-			return m, nil
-		}
-		if msg.Type == tea.KeyRunes {
-			m.inputBuffer.WriteString(string(msg.Runes))
-		}
-	}
-	return m, nil
-}
-
-func (m *Model) handleConfirm(msg tea.KeyMsg, action string) (tea.Model, tea.Cmd) {
-	switch strings.ToLower(msg.String()) {
-	case "y":
-		switch action {
-		case "reject":
-			return m, m.rejectCmd(m.currentPR.ID)
-		case "merge":
-			m.mode = modeConfirmCleanup
-			m.infoMessage = "Clean up the source worktree after merge? (y/n)"
-			return m, nil
-		case "cleanup":
-			return m, m.mergeCmd(m.currentPR.ID, true)
-		}
-	case "n", "esc":
-		if action == "cleanup" && strings.ToLower(msg.String()) == "n" {
-			return m, m.mergeCmd(m.currentPR.ID, false)
-		}
-		m.mode = modeBrowse
-		m.infoMessage = ""
+		m.screen, m.currentPR, m.errMessage = listScreen, nil, ""
+		return m, m.loadPRsCmd()
+	case "c", "r", "m":
+		m.infoMessage = "PR actions use the CLI: gitpr review <id>, approve/reject with its basis, gitpr merge <id>, or gitpr comment <id>."
 	}
 	return m, nil
 }
@@ -494,28 +202,21 @@ func (m *Model) renderList() string {
 	if m.showAll {
 		title = "All PRs"
 	}
-	lines = append(lines, titleStyle.Render(title))
-	lines = append(lines, "")
+	lines = append(lines, titleStyle.Render(title), "")
 
 	if len(m.openRecords) == 0 {
 		lines = append(lines, mutedStyle.Render("No open PRs in refs/gitpr/index/open"))
 	} else {
-		for i, record := range m.openRecords {
+		for i, pr := range m.openRecords {
 			cursor := " "
 			if i == m.listCursor {
 				cursor = ">"
 			}
-			var line string
-			switch pr := record.(type) {
-			case model.PR:
-				line = fmt.Sprintf("%s %s  %-18s %s", cursor, shortID(pr.ID), pr.SourceBranch, pr.Title)
-			case model.PR2:
-				state := pr.RecordDisplayState()
-				if pr.State == model.PRStateClosed && pr.Closure != nil {
-					state += " (" + string(pr.Closure.Reason) + ")"
-				}
-				line = fmt.Sprintf("%s %s  %-20s %-18s %s", cursor, shortID(pr.ID), state, pr.SourceBranch, pr.Title)
+			state := string(pr.State)
+			if pr.State == model.PRStateClosed && pr.Closure != nil {
+				state += " (" + string(pr.Closure.Reason) + ")"
 			}
+			line := fmt.Sprintf("%s %s  %-20s %-18s %s", cursor, shortID(pr.ID), state, pr.SourceBranch, pr.Title)
 			if i == m.listCursor {
 				line = cursorStyle.Render(line)
 			}
@@ -533,6 +234,9 @@ func (m *Model) renderList() string {
 		}
 	}
 	lines = append(lines, mutedStyle.Render(help))
+	if m.skipped > 0 {
+		lines = append(lines, mutedStyle.Render(app.SkippedRecordsMessage(m.skipped)))
+	}
 	if m.errMessage != "" {
 		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render(m.errMessage))
 	}
@@ -541,75 +245,10 @@ func (m *Model) renderList() string {
 }
 
 func (m *Model) renderDetail() string {
-	if m.currentPR2 != nil {
-		return m.renderBranchDetail()
+	pr := m.currentPR
+	if pr == nil {
+		return ""
 	}
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
-	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	conflictStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true)
-	cursorStyle := lipgloss.NewStyle().Background(lipgloss.Color("236"))
-	selectionStyle := lipgloss.NewStyle().Background(lipgloss.Color("238"))
-
-	header := []string{
-		titleStyle.Render(fmt.Sprintf("PR %s: %s", shortID(m.currentPR.ID), m.currentPR.Title)),
-		fmt.Sprintf("Branch: %s  Base: %s  Status: %s", m.currentPR.SourceBranch, m.currentPR.BaseBranch, m.currentPR.Status),
-		fmt.Sprintf("Source SHA: %s  Base SHA: %s", shortID(m.currentPR.SourceHeadSHA), shortID(m.currentPR.BaseHeadSHA)),
-		fmt.Sprintf("Worktree: %s", m.currentPR.SourceWorktreePath),
-	}
-
-	if m.currentPR.Description != "" {
-		header = append(header, "Description: "+m.currentPR.Description)
-	}
-	if len(m.currentPR.MergeConflicts) > 0 {
-		header = append(header, conflictStyle.Render(fmt.Sprintf("Merge blocked: %d conflict(s)", len(m.currentPR.MergeConflicts))))
-		for _, conflict := range m.currentPR.MergeConflicts {
-			header = append(header, conflictStyle.Render("  "+conflict.Message))
-		}
-	}
-	header = append(header, "")
-
-	visibleStart, visibleEnd := m.visibleRange()
-	rows := make([]string, 0, visibleEnd-visibleStart)
-	for idx := visibleStart; idx < visibleEnd; idx++ {
-		row := m.currentRows[idx]
-		text := renderRow(m.width, row)
-		if row.IsHeader {
-			text = titleStyle.Render(text)
-		}
-		if idx == m.diffCursor {
-			text = cursorStyle.Render(text)
-		} else if m.isSelected(idx) {
-			text = selectionStyle.Render(text)
-		}
-		rows = append(rows, text)
-	}
-
-	footer := []string{
-		"",
-		mutedStyle.Render("Keys: j/k move  v select block  c comment/edit  o toggle comments  r request-changes  m merge  esc back  q quit"),
-		mutedStyle.Render(fmt.Sprintf("Comments: %d  Commits: %d", len(m.currentPR.Comments), len(m.currentPR.Commits))),
-	}
-
-	if m.mode == modeCommentInput {
-		commentStyle := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("117")).
-			Padding(0, 1)
-		footer = append(footer, mutedStyle.Render("Comment editor: Ctrl+S save, Enter newline, Esc cancel"))
-		footer = append(footer, commentStyle.Render(commentEditorContent(m.inputBuffer.String())))
-	}
-	if m.infoMessage != "" {
-		footer = append(footer, lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Render(m.infoMessage))
-	}
-	if m.errMessage != "" {
-		footer = append(footer, lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render(m.errMessage))
-	}
-
-	return strings.Join(append(append(header, rows...), footer...), "\n")
-}
-
-func (m *Model) renderBranchDetail() string {
-	pr := m.currentPR2
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	lines := []string{
@@ -652,7 +291,7 @@ func (m *Model) renderBranchDetail() string {
 			lines = append(lines, "Closure note: "+pr.Closure.Note)
 		}
 	}
-	lines = append(lines, "", mutedStyle.Render("Read-only branch-based PR view. Keys: c/r/m show CLI guidance  esc back  q quit"))
+	lines = append(lines, "", mutedStyle.Render("Read-only PR view. Keys: c/r/m show CLI guidance  esc back  q quit"))
 	if m.infoMessage != "" {
 		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Render(m.infoMessage))
 	}
@@ -662,23 +301,23 @@ func (m *Model) renderBranchDetail() string {
 	return strings.Join(lines, "\n")
 }
 
-func (m *Model) loadOpenPRsCmd() tea.Cmd {
+func (m *Model) loadPRsCmd() tea.Cmd {
 	return func() tea.Msg {
-		records, err := m.svc.ListPRs("all")
+		records, skipped, err := m.svc.ListPRs("all")
 		if err != nil {
 			return listLoadedMsg{err: err}
 		}
-		return listLoadedMsg{records: records}
+		return listLoadedMsg{records: records, skipped: skipped}
 	}
 }
 
 func (m *Model) applyListMode() {
 	if m.showAll {
-		m.openRecords = append([]model.Record(nil), m.allRecords...)
+		m.openRecords = append([]model.PR2(nil), m.allRecords...)
 	} else {
 		m.openRecords = m.openRecords[:0]
 		for _, record := range m.allRecords {
-			if record.RecordDisplayState() == "open" {
+			if record.State == model.PRStateOpen {
 				m.openRecords = append(m.openRecords, record)
 			}
 		}
@@ -696,382 +335,8 @@ func (m *Model) loadPRCmd(id string) tea.Cmd {
 		if err != nil {
 			return prLoadedMsg{err: err}
 		}
-		if pr2, ok := record.(model.PR2); ok {
-			return prLoadedMsg{record: pr2}
-		}
-		pr, ok := record.(model.PR)
-		if !ok {
-			return prLoadedMsg{err: fmt.Errorf("unsupported record type %T", record)}
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		pr, err = m.svc.RefreshConflicts(ctx, pr)
-		if err != nil {
-			return prLoadedMsg{err: err}
-		}
-
-		cache := buildHighlightCache(ctx, pr)
-		return prLoadedMsg{record: pr, highlightCache: cache}
+		return prLoadedMsg{record: record}
 	}
-}
-
-func (m *Model) addCommentCmd(id string, comment model.Comment, commentIndex int) tea.Cmd {
-	return func() tea.Msg {
-		var (
-			pr  model.PR
-			err error
-		)
-		if commentIndex >= 0 {
-			pr, err = m.svc.UpdateComment(id, commentIndex, comment)
-		} else {
-			pr, err = m.svc.AddComment(id, comment)
-		}
-		if err != nil {
-			return actionResultMsg{err: err}
-		}
-		action := "Saved"
-		if commentIndex >= 0 {
-			action = "Updated"
-		}
-		return actionResultMsg{
-			pr:           pr,
-			message:      fmt.Sprintf("%s comment on %s:%d-%d", action, comment.FilePath, comment.LineStart, comment.LineEnd),
-			commentSaved: true,
-		}
-	}
-}
-
-func (m *Model) rejectCmd(id string) tea.Cmd {
-	return func() tea.Msg {
-		pr, _, err := m.svc.RejectPR(id)
-		if err != nil {
-			return actionResultMsg{err: err}
-		}
-		return actionResultMsg{
-			pr:      pr,
-			message: fmt.Sprintf("PR %s marked as rejected", shortID(pr.ID)),
-		}
-	}
-}
-
-func (m *Model) mergeCmd(id string, cleanup bool) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-
-		pr, _, err := m.svc.MergePR(ctx, id, cleanup)
-		if err != nil {
-			return actionResultMsg{err: err}
-		}
-		msg := fmt.Sprintf("PR %s merged into %s", shortID(pr.ID), pr.BaseBranch)
-		if !cleanup {
-			msg += ". Source worktree kept."
-		}
-		return actionResultMsg{pr: pr, message: msg}
-	}
-}
-
-func (m *Model) visibleDiffHeight() int {
-	height := m.height - 11
-	if height < 5 {
-		return 5
-	}
-	return height
-}
-
-func (m *Model) visibleRange() (int, int) {
-	start := m.diffOffset
-	end := start + m.visibleDiffHeight()
-	if end > len(m.currentRows) {
-		end = len(m.currentRows)
-	}
-	if start < 0 {
-		start = 0
-	}
-	return start, end
-}
-
-func (m *Model) adjustOffset() {
-	height := m.visibleDiffHeight()
-	if m.diffCursor < m.diffOffset {
-		m.diffOffset = m.diffCursor
-	}
-	if m.diffCursor >= m.diffOffset+height {
-		m.diffOffset = m.diffCursor - height + 1
-	}
-	if m.diffOffset < 0 {
-		m.diffOffset = 0
-	}
-}
-
-func (m *Model) isSelected(idx int) bool {
-	if m.selectAnchor == -1 {
-		return false
-	}
-	start, end := sortedPair(m.selectAnchor, m.diffCursor)
-	return idx >= start && idx <= end
-}
-
-func (m *Model) rebuildRows() {
-	m.currentRows = buildRows(m.currentPR, m.expandedComments, m.highlightCache)
-}
-
-type commentTarget struct {
-	filePath  string
-	lineStart int
-	lineEnd   int
-}
-
-func (m *Model) commentTarget() (commentTarget, bool) {
-	if len(m.currentRows) == 0 {
-		return commentTarget{}, false
-	}
-
-	start, end := m.diffCursor, m.diffCursor
-	if m.selectAnchor != -1 {
-		start, end = sortedPair(m.selectAnchor, m.diffCursor)
-	}
-
-	var target commentTarget
-	for idx := start; idx <= end; idx++ {
-		row := m.currentRows[idx]
-		if row.IsHeader || row.IsComment || row.FilePath == "" {
-			continue
-		}
-		line := rowLine(row)
-		if line == 0 {
-			continue
-		}
-		if target.filePath == "" {
-			target.filePath = row.FilePath
-			target.lineStart = line
-			target.lineEnd = line
-			continue
-		}
-		if target.filePath != row.FilePath {
-			break
-		}
-		if line < target.lineStart {
-			target.lineStart = line
-		}
-		if line > target.lineEnd {
-			target.lineEnd = line
-		}
-	}
-
-	return target, target.filePath != ""
-}
-
-func (m *Model) toggleCommentsForSelection() bool {
-	target, ok := m.commentTarget()
-	if !ok {
-		m.errMessage = "Select a diff line with comments to expand or collapse them."
-		return false
-	}
-
-	keys := m.commentKeysForTarget(target)
-	if len(keys) == 0 {
-		m.errMessage = "No comments attached to the selected line range."
-		return false
-	}
-
-	expand := false
-	for _, key := range keys {
-		if !m.expandedComments[key] {
-			expand = true
-			break
-		}
-	}
-
-	for _, key := range keys {
-		m.expandedComments[key] = expand
-		if !expand {
-			delete(m.expandedComments, key)
-		}
-	}
-
-	if expand {
-		m.infoMessage = "Expanded inline comments."
-	} else {
-		m.infoMessage = "Collapsed inline comments."
-	}
-	m.errMessage = ""
-	return true
-}
-
-func (m *Model) commentKeysForTarget(target commentTarget) []string {
-	var keys []string
-	for idx, comment := range m.currentPR.Comments {
-		if comment.FilePath != target.filePath {
-			continue
-		}
-		if comment.LineStart > target.lineEnd || comment.LineEnd < target.lineStart {
-			continue
-		}
-		keys = append(keys, commentKey(comment, idx))
-	}
-	return keys
-}
-
-func buildRows(pr model.PR, expandedComments map[string]bool, highlightCache map[string]fileHighlight) []diffRow {
-	commentIndex := buildCommentIndex(pr.Comments)
-	var rows []diffRow
-	for _, file := range pr.FileDiffs {
-		filePath := file.NewPath
-		if filePath == "" {
-			filePath = file.OldPath
-		}
-		highlight := highlightCache[filePath]
-
-		rows = append(rows, diffRow{
-			IsHeader: true,
-			Header:   fmt.Sprintf("%s (%s)", filePath, file.Status),
-		})
-
-		for _, hunk := range file.Hunks {
-			if hunk.Header != "" {
-				rows = append(rows, diffRow{
-					IsHeader: true,
-					Header:   "@@ " + hunk.Header,
-				})
-			}
-
-			for _, row := range buildHunkRows(filePath, hunk, highlight) {
-				line := rowLine(row)
-				anchored, count := commentsForLine(commentIndex[filePath], line)
-				row.CommentCount = count
-				rows = append(rows, row)
-				for _, comment := range anchored {
-					if !expandedComments[comment.key] {
-						continue
-					}
-					rows = append(rows, diffRow{
-						FilePath:    filePath,
-						IsComment:   true,
-						CommentKey:  comment.key,
-						CommentMeta: commentSummary(comment.comment),
-						CommentBody: comment.comment.Comment,
-						LineStart:   comment.comment.LineStart,
-						LineEnd:     comment.comment.LineEnd,
-					})
-				}
-			}
-		}
-	}
-	return rows
-}
-
-func buildHunkRows(filePath string, hunk model.Hunk, highlight fileHighlight) []diffRow {
-	var rows []diffRow
-	lines := hunk.Lines
-	for i := 0; i < len(lines); {
-		switch lines[i].Kind {
-		case "context":
-			oldHighlighted, _ := highlightedLine(highlight.old, lines[i].OldLine)
-			newHighlighted, _ := highlightedLine(highlight.new, lines[i].NewLine)
-			rows = append(rows, diffRow{
-				FilePath:  filePath,
-				OldLine:   lines[i].OldLine,
-				NewLine:   lines[i].NewLine,
-				LeftKind:  "context",
-				RightKind: "context",
-				LeftText:  renderDiffCell("context", "  ", oldHighlighted, lines[i].Content),
-				RightText: renderDiffCell("context", "  ", newHighlighted, lines[i].Content),
-			})
-			i++
-		default:
-			start := i
-			for i < len(lines) && lines[i].Kind != "context" {
-				i++
-			}
-			block := lines[start:i]
-			var deletes []model.DiffLine
-			var adds []model.DiffLine
-			for _, line := range block {
-				if line.Kind == "delete" {
-					deletes = append(deletes, line)
-				}
-				if line.Kind == "add" {
-					adds = append(adds, line)
-				}
-			}
-			rows = append(rows, pairChangedRows(filePath, deletes, adds, highlight)...)
-		}
-	}
-	return rows
-}
-
-func pairChangedRows(filePath string, deletes, adds []model.DiffLine, highlight fileHighlight) []diffRow {
-	size := len(deletes)
-	if len(adds) > size {
-		size = len(adds)
-	}
-
-	rows := make([]diffRow, 0, size)
-	for i := 0; i < size; i++ {
-		row := diffRow{FilePath: filePath}
-		if i < len(deletes) {
-			highlighted, _ := highlightedLine(highlight.old, deletes[i].OldLine)
-			row.OldLine = deletes[i].OldLine
-			row.LeftKind = "delete"
-			row.LeftText = renderDiffCell("delete", "- ", highlighted, deletes[i].Content)
-		}
-		if i < len(adds) {
-			highlighted, _ := highlightedLine(highlight.new, adds[i].NewLine)
-			row.NewLine = adds[i].NewLine
-			row.RightKind = "add"
-			row.RightText = renderDiffCell("add", "+ ", highlighted, adds[i].Content)
-		}
-		rows = append(rows, row)
-	}
-	return rows
-}
-
-func renderRow(totalWidth int, row diffRow) string {
-	if row.IsHeader {
-		return row.Header
-	}
-	if row.IsComment {
-		return renderCommentRow(totalWidth, row)
-	}
-
-	leftWidth := max(20, (totalWidth-11)/2)
-	rightWidth := max(20, totalWidth-11-leftWidth)
-
-	leftLine := "    "
-	rightLine := "    "
-	if row.OldLine > 0 {
-		leftLine = formatLineNumber(row.LeftKind, row.OldLine, row.CommentCount > 0 && row.NewLine == 0)
-	}
-	if row.NewLine > 0 {
-		rightLine = formatLineNumber(row.RightKind, row.NewLine, row.CommentCount > 0)
-	}
-
-	left := ansi.Truncate(row.LeftText, leftWidth, "...")
-	right := ansi.Truncate(row.RightText, rightWidth, "...")
-	return fmt.Sprintf("%s %s | %s %s", leftLine, padANSI(left, leftWidth), rightLine, padANSI(right, rightWidth))
-}
-
-func latestCommitSHA(pr model.PR) string {
-	if len(pr.Commits) == 0 {
-		return ""
-	}
-	return pr.Commits[0].SHA
-}
-
-func sortedPair(a, b int) (int, int) {
-	if a > b {
-		return b, a
-	}
-	return a, b
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 func shortID(id string) string {
@@ -1079,98 +344,4 @@ func shortID(id string) string {
 		return id
 	}
 	return id[:12]
-}
-
-func commentEditorContent(content string) string {
-	if content == "" {
-		return " "
-	}
-	return content
-}
-
-type indexedComment struct {
-	key     string
-	comment model.Comment
-}
-
-func buildCommentIndex(comments []model.Comment) map[string][]indexedComment {
-	index := map[string][]indexedComment{}
-	for idx, comment := range comments {
-		index[comment.FilePath] = append(index[comment.FilePath], indexedComment{
-			key:     commentKey(comment, idx),
-			comment: comment,
-		})
-	}
-	return index
-}
-
-func commentsForLine(comments []indexedComment, line int) ([]indexedComment, int) {
-	if line == 0 {
-		return nil, 0
-	}
-
-	var anchored []indexedComment
-	count := 0
-	for _, comment := range comments {
-		if line < comment.comment.LineStart || line > comment.comment.LineEnd {
-			continue
-		}
-		count++
-		if line == comment.comment.LineEnd {
-			anchored = append(anchored, comment)
-		}
-	}
-	return anchored, count
-}
-
-func commentKey(comment model.Comment, idx int) string {
-	return fmt.Sprintf("%s:%d:%d:%d", comment.FilePath, comment.LineStart, comment.LineEnd, idx)
-}
-
-func rowLine(row diffRow) int {
-	if row.NewLine > 0 {
-		return row.NewLine
-	}
-	return row.OldLine
-}
-
-func renderCommentRow(totalWidth int, row diffRow) string {
-	width := max(30, totalWidth-2)
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("221")).
-		Padding(0, 1).
-		Width(width)
-	body := commentMetaStyle.Render(row.CommentMeta) + "\n" + commentBodyStyle.Render(row.CommentBody)
-	return boxStyle.Render(body)
-}
-
-func formatLineNumber(kind string, line int, hasComments bool) string {
-	if hasComments {
-		return commentBadgeStyle.Render(fmt.Sprintf("%3d*", line))
-	}
-	switch kind {
-	case "add":
-		return diffAddStyle.Render(fmt.Sprintf("%4d", line))
-	case "delete":
-		return diffDeleteStyle.Render(fmt.Sprintf("%4d", line))
-	default:
-		return diffContextStyle.Render(fmt.Sprintf("%4d", line))
-	}
-}
-
-func padANSI(text string, width int) string {
-	padding := width - lipgloss.Width(text)
-	if padding < 0 {
-		padding = 0
-	}
-	return text + strings.Repeat(" ", padding)
-}
-
-func commentSummary(comment model.Comment) string {
-	summary := fmt.Sprintf("Comment %d-%d", comment.LineStart, comment.LineEnd)
-	if comment.CommitSHA != "" {
-		summary += " @ " + shortID(comment.CommitSHA)
-	}
-	return summary
 }

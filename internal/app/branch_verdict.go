@@ -42,36 +42,17 @@ func isFullObjectID(value string) bool {
 }
 
 func (s *Service) ApprovePR(ctx context.Context, id string, heads ExpectedHeads) (model.PR2, string, error) {
-	record, _, err := s.store.LoadPR(id)
-	if err != nil {
-		return model.PR2{}, "", err
-	}
-	if _, legacy := record.(model.PR); legacy {
-		return model.PR2{}, "", errors.New("approve is available only for branch-based PRs; legacy snapshots retain their historical merge workflow")
-	}
 	if err := heads.Validate(); err != nil {
 		return model.PR2{}, "", err
 	}
 	return s.appendVerdict(ctx, id, heads, model.VerdictAccepted, true)
 }
 
-func (s *Service) RejectRecord(ctx context.Context, id string, heads *ExpectedHeads) (model.Record, string, error) {
-	record, _, err := s.store.LoadPR(id)
-	if err != nil {
-		return nil, "", err
-	}
-	if _, legacy := record.(model.PR); legacy {
-		if heads != nil {
-			return nil, "", errors.New("expected-head flags apply only to branch-based PRs; legacy reject uses its stored snapshot")
-		}
-		pr, ref, err := s.rejectLegacyPR(id)
-		return pr, ref, err
-	}
+func (s *Service) RejectPR(ctx context.Context, id string, heads *ExpectedHeads) (model.PR2, string, error) {
 	if heads == nil {
-		return nil, "", ExpectedHeads{}.Validate()
+		return model.PR2{}, "", ExpectedHeads{}.Validate()
 	}
-	pr, ref, err := s.appendVerdict(ctx, id, *heads, model.VerdictRejected, false)
-	return pr, ref, err
+	return s.appendVerdict(ctx, id, *heads, model.VerdictRejected, false)
 }
 
 func (s *Service) appendVerdict(ctx context.Context, id string, heads ExpectedHeads, verdict model.ReviewVerdict, checkLive bool) (model.PR2, string, error) {
@@ -79,7 +60,7 @@ func (s *Service) appendVerdict(ctx context.Context, id string, heads ExpectedHe
 		return model.PR2{}, "", err
 	}
 	for attempt := 0; attempt < metadataMutationAttempts; attempt++ {
-		pr, version, err := s.store.LoadPR2(id)
+		pr, version, err := s.store.LoadPR(id)
 		if err != nil {
 			return model.PR2{}, "", err
 		}
