@@ -1,0 +1,47 @@
+# ---
+# relationships:
+#   validates: release
+# ---
+name: CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Run task check's commands directly; Task is not required on the runner.
+      - name: Check formatting
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            echo "gofmt: the following files are not formatted:" >&2
+            echo "$files" >&2
+            exit 1
+          fi
+
+      - name: Static analysis
+        run: go vet -tags=test ./...
+
+      - name: Go tests
+        run: go test -tags=test ./...
+
+      - name: Homebrew publisher tests
+        run: |
+          bash -n scripts/render-homebrew-formula.sh scripts/publish-homebrew-tap.sh scripts/test-homebrew.sh
+          bash scripts/test-homebrew.sh
