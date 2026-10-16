@@ -65,9 +65,11 @@ tasks:
     silent: true
 
   release:check:
-    desc: Validate the GoReleaser configuration
+    desc: Validate GoReleaser and Homebrew publication
     cmds:
       - goreleaser check
+      - bash -n scripts/render-homebrew-formula.sh scripts/publish-homebrew-tap.sh scripts/test-homebrew.sh
+      - bash scripts/test-homebrew.sh
 
   release:snapshot:
     desc: Build snapshot release artifacts into ./dist

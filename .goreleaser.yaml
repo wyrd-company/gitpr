@@ -48,25 +48,3 @@ release:
 
 changelog:
   sort: asc
-
-brews:
-  - name: gitpr
-    ids:
-      - gitpr
-    homepage: https://github.com/wyrd-company/gitpr
-    description: Review local git worktree branches as lightweight PRs
-    directory: Formula
-    repository:
-      owner: wyrd-company
-      name: homebrew-tools
-      branch: main
-      git:
-        url: "ssh://git\u0040github.com/wyrd-company/homebrew-tools.git"
-        private_key: "{{ .Env.FORMULAE_PUBLISH_KEY }}"
-    commit_author:
-      name: gitpr release bot
-      email: "41898282+github-actions[bot]@users.noreply.github.com"
-    install: |
-      bin.install "gitpr"
-    test: |
-      system "#{bin}/gitpr", "--version"
