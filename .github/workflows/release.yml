@@ -31,4 +31,17 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FORMULAE_PUBLISH_KEY: ${{ secrets.FORMULAE_PUBLISH_KEY }}
+
+      - name: Check out Homebrew tap
+        uses: actions/checkout@v5
+        with:
+          repository: wyrd-company/homebrew-tools
+          ref: main
+          path: homebrew-tools
+          ssh-key: ${{ secrets.FORMULAE_PUBLISH_KEY }}
+          # The next step's push requires the checkout's SSH key and command.
+          # checkout removes them before that step when this is false.
+          persist-credentials: true
+
+      - name: Publish Homebrew formula
+        run: bash scripts/publish-homebrew-tap.sh dist/checksums.txt homebrew-tools

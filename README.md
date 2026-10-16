@@ -30,6 +30,28 @@ task version
 task version:json
 ```
 
+### Recover Homebrew publication
+
+The GitHub release can succeed before the tap checkout or push fails. Recover
+the formula directly from that release's `checksums.txt`, using a trusted
+product checkout and the tap's existing authorized SSH credentials. This leaves
+the published release and archives unchanged.
+
+```bash
+release_version=1.2.3
+mkdir -p .tmp/homebrew-recovery
+gh release download "$release_version" --repo wyrd-company/gitpr \
+  --pattern checksums.txt --dir .tmp/homebrew-recovery
+git clone git@github.com:wyrd-company/homebrew-tools.git .tmp/homebrew-recovery/tap
+bash scripts/publish-homebrew-tap.sh .tmp/homebrew-recovery/checksums.txt \
+  .tmp/homebrew-recovery/tap "$release_version"
+```
+
+If the push fails, repeat the publisher command in the same checkout after the
+failure is resolved. It pushes any retained formula commit even when rendering
+stages no further change. A fresh tap checkout also supports recovery from the
+same published checksums; neither route requires running GoReleaser again.
+
 ## Installation
 
 Build from source locally:
