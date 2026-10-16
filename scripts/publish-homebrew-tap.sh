@@ -19,8 +19,10 @@ git config user.name "gitpr release bot"
 git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 git add Formula/gitpr.rb
 if git diff --cached --quiet; then
-  echo "Formula unchanged; nothing to publish."
-  exit 0
+  echo "Formula unchanged; checking remote publication."
+else
+  git commit -m "Brew formula update for gitpr version $version"
 fi
-git commit -m "Brew formula update for gitpr version $version"
+# A failed push can leave an unpublished commit in this checkout. Retry it even
+# when rendering the same release no longer stages any changes.
 git push origin HEAD:main

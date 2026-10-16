@@ -22,8 +22,11 @@ bash "$root/scripts/render-homebrew-formula.sh" "$version" "$checksums" "$tempor
 awk '/^[[:space:]]*url / {url=$2} /^[[:space:]]*sha256 / {print url, $2}' \
   "$temporary/gitpr.rb" > "$temporary/mapping"
 while read -r digest filename; do
-  grep -Fxq "\"https://github.com/wyrd-company/gitpr/releases/download/$version/$filename\" \"$digest\"" \
-    "$temporary/mapping"
+  if ! grep -Fxq "\"https://github.com/wyrd-company/gitpr/releases/download/$version/$filename\" \"$digest\"" \
+    "$temporary/mapping"; then
+    echo "FAIL url/checksum mapping: $filename" >&2
+    exit 1
+  fi
 done < "$checksums"
 [[ "$(wc -l < "$temporary/mapping")" -eq 4 ]]
 if grep -q '^[[:space:]]*version ' "$temporary/gitpr.rb"; then
@@ -61,3 +64,34 @@ bash "$root/scripts/publish-homebrew-tap.sh" "$checksums" "$temporary/tap" "$ver
 git -C "$temporary/remote.git" show main:Formula/gitpr.rb > "$temporary/published.rb"
 cmp "$temporary/gitpr.rb" "$temporary/published.rb"
 echo "PASS publisher writes main and unchanged replay creates no commit"
+
+for recovery in retained fresh; do
+  remote="$temporary/recovery-$recovery.git"
+  tap="$temporary/recovery-$recovery"
+  git init --quiet --bare --initial-branch=main "$remote"
+  git clone --quiet "$remote" "$tap"
+  cat > "$remote/hooks/pre-receive" <<'REJECT_PUSH'
+#!/usr/bin/env bash
+echo "synthetic publication outage" >&2
+exit 1
+REJECT_PUSH
+  chmod +x "$remote/hooks/pre-receive"
+  if bash "$root/scripts/publish-homebrew-tap.sh" "$checksums" "$tap" "$version" \
+    > "$temporary/rejected-push" 2>&1; then
+    echo "FAIL $recovery recovery: rejected push reported success" >&2
+    exit 1
+  fi
+  grep -q 'synthetic publication outage' "$temporary/rejected-push"
+  rm "$remote/hooks/pre-receive"
+  if [[ "$recovery" == fresh ]]; then
+    tap="$temporary/fresh-recovery-checkout"
+    git clone --quiet "$remote" "$tap"
+  fi
+  bash "$root/scripts/publish-homebrew-tap.sh" "$checksums" "$tap" "$version"
+  if ! git -C "$remote" show main:Formula/gitpr.rb > "$temporary/recovered.rb" 2>/dev/null || \
+    ! cmp -s "$temporary/gitpr.rb" "$temporary/recovered.rb"; then
+    echo "FAIL $recovery publication recovery did not update main" >&2
+    exit 1
+  fi
+  echo "PASS $recovery checkout recovers publication from release checksums"
+done
