@@ -1,5 +1,5 @@
 ---
-docs: true
+product: gitpr
 title: Usage
 order: 3
 ---

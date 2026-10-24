@@ -4,7 +4,7 @@
 pull requests. Review metadata and retained commit identities live in Git refs,
 so every worktree and clone can use the same records without a server.
 
-![gitpr local review demo](docs/assets/demo.gif)
+![gitpr local review demo](docs/user/assets/demo.gif)
 
 ## Versioning and release
 

@@ -266,7 +266,7 @@ func TestListSkipsLegacyRecordsAndIDVerbsNameTheDocumentedPath(t *testing.T) {
 		if !strings.Contains(listed, "Branch record") || strings.Contains(listed, legacyID[:12]) {
 			t.Fatalf("list rendered a legacy record:\n%s", listed)
 		}
-		if !strings.Contains(listed, "Skipped 1") || !strings.Contains(listed, "docs/usage.md") {
+		if !strings.Contains(listed, "Skipped 1") || !strings.Contains(listed, "docs/user/usage.md") {
 			t.Fatalf("list did not report the skipped legacy record:\n%s", listed)
 		}
 
@@ -459,7 +459,7 @@ func cliGit(t *testing.T, dir string, args ...string) string {
 // blocks the refusal error points people at, so the prose and the behavior
 // cannot drift apart.
 func TestDocumentedLegacyCommandsEnumerateAndRemoveARecord(t *testing.T) {
-	for _, doc := range []string{"../../docs/usage.md", "../../README.md"} {
+	for _, doc := range []string{"../../docs/user/usage.md", "../../README.md"} {
 		t.Run(doc, func(t *testing.T) {
 			enumerate := documentedShellBlock(t, doc, "for-each-ref", "schema:")
 			remove := documentedShellBlock(t, doc, "update-ref -d")

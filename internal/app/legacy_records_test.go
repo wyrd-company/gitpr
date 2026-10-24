@@ -90,7 +90,7 @@ func TestListSkipsLegacyRecordsAndReportsTheSkipCount(t *testing.T) {
 		t.Fatalf("skipped = %d, want 1", skipped)
 	}
 	message := SkippedRecordsMessage(skipped)
-	for _, want := range []string{"Skipped 1", "Legacy records", "docs/usage.md"} {
+	for _, want := range []string{"Skipped 1", "Legacy records", "docs/user/usage.md"} {
 		if !strings.Contains(message, want) {
 			t.Errorf("skip message %q is missing %q", message, want)
 		}

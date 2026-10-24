@@ -141,7 +141,7 @@ func firstNonEmpty(values ...string) string {
 func SkippedRecordsMessage(skipped int) string {
 	return fmt.Sprintf(
 		"Skipped %d unreadable record(s) (legacy or newer schema). "+
-			"Legacy records are read and removed with raw git; see the \"Legacy records\" section of the gitpr README and docs/usage.md.",
+			"Legacy records are read and removed with raw git; see the \"Legacy records\" section of the gitpr README and docs/user/usage.md.",
 		skipped,
 	)
 }

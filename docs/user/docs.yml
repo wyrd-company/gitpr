@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=https://wyrd.foo/schemas/docs/v1.json
+schemaVersion: 1
+assets:
+  - assets/demo.gif
+products:
+  gitpr:
+    name: gitpr
+    version: 0.4.0
+    docs-version: 0.4.0
+    tagline: Review worktree branches as local pull requests.
+    blurb: >-
+      A local Go CLI and TUI that turns worktree branches into lightweight pull
+      requests against your local default branch — no server, no remote, no forge.
+    status: stable
+    category: Git & Review
+    order: 1
+    highlights:
+      - Review a worktree branch as a pull request with no server, no remote and no forge.
+      - Review records live under refs/gitpr/, so every worktree and clone of a repository shares them.
+      - Each approve or reject appends an immutable review event for one exact source and base head pair.
+      - Merge needs an accepted latest event, both heads unchanged and a strict fast-forward.
+      - Comment threads anchor to file ranges, follow unchanged content and stay readable after the PR closes.
+    media:
+      - src: assets/demo.gif
+        caption: Creating, reviewing, commenting on, approving and merging a pull request in a local repository.
+    kinds:
+      - kind: cli
+        install:
+          - method: homebrew
+            os: [macos, linux]
+            default: true
+            command: brew install wyrd-company/tools/gitpr

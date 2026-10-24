@@ -3,7 +3,7 @@
 #   references: usage
 # ---
 
-Output docs/assets/demo.gif
+Output docs/user/assets/demo.gif
 
 Require git
 Require gitpr

@@ -90,7 +90,7 @@ func TestLegacyRecordErrorCarriesWorkingRetrievalAndRemovalCommands(t *testing.T
 		t.Fatal("LoadPR on a legacy record returned no error")
 	}
 	message := err.Error()
-	for _, want := range []string{legacyID, "gitpr create", "Legacy records", "docs/usage.md", "https://github.com/wyrd-company/gitpr"} {
+	for _, want := range []string{legacyID, "gitpr create", "Legacy records", "docs/user/usage.md", "https://github.com/wyrd-company/gitpr"} {
 		if !strings.Contains(message, want) {
 			t.Errorf("legacy error %q is missing %q", message, want)
 		}
