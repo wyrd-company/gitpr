@@ -1,5 +1,5 @@
 ---
-docs: true
+product: gitpr
 title: Command reference
 order: 4
 ---

@@ -440,7 +440,7 @@ func legacyRecordGuidance(id string) string {
 			"recreate the review with `gitpr create`, then remove the record with "+
 			"`git for-each-ref --format='%%(refname)' refs/gitpr/pr/%[1]s 'refs/gitpr/index/*/%[1]s' | "+
 			"while read -r ref; do git update-ref -d \"$ref\"; done` (irreversible). "+
-			"The \"Legacy records\" section of docs/usage.md at "+
+			"The \"Legacy records\" section of docs/user/usage.md at "+
 			"https://github.com/wyrd-company/gitpr carries the full story.",
 		id,
 	)
