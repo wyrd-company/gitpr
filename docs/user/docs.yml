@@ -6,7 +6,7 @@ products:
   gitpr:
     name: gitpr
     version: 0.4.0
-    docs-version: 0.4.0
+    docs-version: 0.1.0
     tagline: Review worktree branches as local pull requests.
     blurb: >-
       A local Go CLI and TUI that turns worktree branches into lightweight pull

@@ -15,7 +15,24 @@ release-units:
     - adapter: go
       file: go.mod
       mode: none
+    - adapter: yaml
+      file: docs/user/docs.yml
+      mode: committed
+      pointer: /products/gitpr/version
     tags:
       primary:
         role: primary
         template: '{version}'
+  gitpr-docs:
+    path: docs/user
+    depends-on:
+    - gitpr
+    projections:
+    - adapter: yaml
+      file: docs.yml
+      mode: committed
+      pointer: /products/gitpr/docs-version
+    tags:
+      primary:
+        role: primary
+        template: '{id}@{version}'
