@@ -55,10 +55,11 @@ same published checksums; neither route requires running GoReleaser again.
 ## Publishing docs
 
 The public docs live in `docs/user/` and publish to wyrd.foo. The
-`Publish to wyrd.foo` workflow runs when a code tag (`<version>`) or a docs tag
-(`gitpr-docs@<version>`) is pushed, and on a manual run. A push to `main` does
-not publish. A docs-only fix is a `gitpr-docs` intent: it releases the docs
-unit on its own.
+`Publish to wyrd.foo` workflow runs after each successful `release` workflow run
+for a code tag (`<version>`), when a docs tag (`gitpr-docs@<version>`) is
+pushed, and on a manual run with the tag or commit as `ref`. A push to `main`
+does not publish. A docs-only fix is a `gitpr-docs` intent: it releases the
+docs unit on its own.
 
 ## Installation
 

@@ -1,12 +1,19 @@
 name: Publish to wyrd.foo
 
-# Publishes docs/user and the release data to wyrd.foo when a code unit tag
-# (gitpr, {version}) or a docs unit tag (gitpr-docs@{version}) is pushed, and on
-# a manual run. A plain push to main does not publish.
+# Publishes docs/user and the release data to wyrd.foo after each successful
+# run of the release workflow (the code unit, gitpr), when a docs unit tag
+# (gitpr-docs@{version}) is pushed, and on a manual run. A plain push to main
+# does not publish. The code unit follows the release workflow instead of the
+# tag push on its own: wyrd.foo reads the GitHub Release of the tag, and
+# GoReleaser creates it.
 on:
+  workflow_run:
+    workflows:
+      - release
+    types:
+      - completed
   push:
     tags:
-      - "[0-9]*"
       - "gitpr-docs@*"
   workflow_dispatch:
     inputs:
@@ -32,9 +39,14 @@ permissions:
 
 jobs:
   publish:
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository)
     uses: wyrd-company/wyrd.foo/.github/workflows/publish-docs.yml@v2
     with:
-      ref: ${{ inputs.ref || github.ref_name }}
+      ref: ${{ inputs.ref || github.event.workflow_run.head_branch || github.ref_name }}
       feature: ${{ inputs.feature || false }}
       feature-product: ${{ inputs.feature-product || '' }}
       feature-days: ${{ inputs.feature-days || '14' }}
