@@ -1,22 +1,42 @@
-# Copy this into a tool repository as `.github/workflows/publish-docs.yml`.
-# It publishes that repo's docs/ into the wyrd.foo content tap on release.
-# Requires org secrets WYRD_TOOLS_DOCS_PUBLISHER_APP_ID / _PRIVATE_KEY.
-name: Publish docs
+name: Publish to wyrd.foo
 
+# Publishes docs/user and the release data to wyrd.foo when a code unit tag
+# (gitpr, {version}) or a docs unit tag (gitpr-docs@{version}) is pushed, and on
+# a manual run. A plain push to main does not publish.
 on:
-  release:
-    types: [published]
-  workflow_dispatch: {}
+  push:
+    tags:
+      - "[0-9]*"
+      - "gitpr-docs@*"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Tag or commit to publish
+        required: true
+      feature:
+        description: Feature a product on the front page
+        type: boolean
+        default: false
+      feature-product:
+        description: The product key to feature; empty when the repo has one product
+        default: ""
+      feature-days:
+        description: How long the feature lasts, in days
+        default: "14"
+      feature-reason:
+        description: For example "New MCP server"; default "New release"
+        default: ""
 
 permissions:
   contents: read
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: wyrd-company/wyrd.foo/.github/actions/publish-docs@v1
-        with:
-          app-id: ${{ secrets.WYRD_TOOLS_DOCS_PUBLISHER_APP_ID }}
-          private-key: ${{ secrets.WYRD_TOOLS_DOCS_PUBLISHER_PRIVATE_KEY }}
+    uses: wyrd-company/wyrd.foo/.github/workflows/publish-docs.yml@v2
+    with:
+      ref: ${{ inputs.ref || github.ref_name }}
+      feature: ${{ inputs.feature || false }}
+      feature-product: ${{ inputs.feature-product || '' }}
+      feature-days: ${{ inputs.feature-days || '14' }}
+      feature-reason: ${{ inputs.feature-reason || '' }}
+    secrets: inherit

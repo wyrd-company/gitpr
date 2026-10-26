@@ -52,6 +52,14 @@ failure is resolved. It pushes any retained formula commit even when rendering
 stages no further change. A fresh tap checkout also supports recovery from the
 same published checksums; neither route requires running GoReleaser again.
 
+## Publishing docs
+
+The public docs live in `docs/user/` and publish to wyrd.foo. The
+`Publish to wyrd.foo` workflow runs when a code tag (`<version>`) or a docs tag
+(`gitpr-docs@<version>`) is pushed, and on a manual run. A push to `main` does
+not publish. A docs-only fix is a `gitpr-docs` intent: it releases the docs
+unit on its own.
+
 ## Installation
 
 Build from source locally:
