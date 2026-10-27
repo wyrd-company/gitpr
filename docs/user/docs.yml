@@ -2,6 +2,10 @@
 schemaVersion: 1
 assets:
   - assets/demo.gif
+  - assets/logo.svg
+  - assets/logo-dark.svg
+  - assets/favicon.svg
+  - assets/social-image.png
 products:
   gitpr:
     name: gitpr
@@ -23,6 +27,10 @@ products:
     media:
       - src: assets/demo.gif
         caption: Creating, reviewing, commenting on, approving and merging a pull request in a local repository.
+    logo: assets/logo.svg
+    logo-dark: assets/logo-dark.svg
+    favicon: assets/favicon.svg
+    social-image: assets/social-image.png
     kinds:
       - kind: cli
         install:
