@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1
+
+### Fixes
+
+- Generate Homebrew formulae that pass strict audit and style checks.
+- Publish the public docs from docs/user in the wyrd.foo format, and point the legacy-record messages at docs/user/usage.md.
+
 ## 0.4.0
 
 ### Breaking
