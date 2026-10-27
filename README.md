@@ -26,8 +26,11 @@ entirely in bare `X.Y.Z` Git tags (no `v` prefix).
   commits the result
 - `intentional tag` creates the annotated release tag after that commit lands
 
-Pushing the resulting tag triggers `.github/workflows/release.yml`, which is
-unchanged by Intentional adoption. Separately,
+Pushing the resulting tag triggers `.github/workflows/release.yml`. The docs
+unit's tag (`gitpr-docs@<version>`) can point at the same commit, so the
+workflow builds the pushed tag by name. To rebuild a release, run the workflow
+by hand with the `tag` input; then run `Publish to wyrd.foo` with that tag as
+`ref`, because only tag-push release runs trigger it. Separately,
 [`tagver`](https://github.com/wyrd-company/tagver) stamps the currently tagged
 version into `gitpr --version` at build time:
 
