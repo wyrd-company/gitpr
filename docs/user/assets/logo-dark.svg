@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56" role="img" aria-labelledby="title">
+  <title id="title">gitpr</title>
+  <rect width="56" height="56" rx="8" fill="#6aa5ff"/>
+  <path d="M11 14.5h20.5L44.5 28 31.5 41.5H11z" fill="#0b0b0c" stroke="#0b0b0c" stroke-width="3" stroke-linejoin="round"/>
+  <circle cx="17.5" cy="28" r="3" fill="#6aa5ff"/>
+  <path d="M24 28.5l4 4 7.5-8.5" fill="none" stroke="#6aa5ff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

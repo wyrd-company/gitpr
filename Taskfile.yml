@@ -32,6 +32,19 @@ tasks:
     cmds:
       - tagver --format json
 
+  brand:render:
+    desc: Render the social image PNGs from docs/brand with agent-browser
+    cmds:
+      - agent-browser set viewport 1200 630
+      - agent-browser open "file://{{.ROOT_DIR}}/docs/brand/social-image.svg"
+      - agent-browser wait 1500
+      - agent-browser screenshot "{{.ROOT_DIR}}/docs/user/assets/social-image.png"
+      - agent-browser set viewport 1280 640
+      - agent-browser open "file://{{.ROOT_DIR}}/docs/brand/social-preview.svg"
+      - agent-browser wait 1500
+      - agent-browser screenshot "{{.ROOT_DIR}}/docs/brand/social-preview.png"
+      - agent-browser close
+
   fmt:check:
     desc: Fail and name any tracked Go file that is not gofmt-formatted
     cmds:

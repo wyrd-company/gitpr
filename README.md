@@ -1,4 +1,10 @@
-# gitpr
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/user/assets/logo-dark.svg">
+    <img alt="" src="docs/user/assets/logo.svg" height="48" align="absmiddle">
+  </picture>
+  gitpr
+</h1>
 
 `gitpr` is a local Go CLI/TUI for reviewing worktree branches as lightweight
 pull requests. Review metadata and retained commit identities live in Git refs,

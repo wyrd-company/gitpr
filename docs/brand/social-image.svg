@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <style>
+    @import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;600&amp;family=Geist+Mono:wght@500&amp;display=block");
+    .name{font-family:"Geist Mono",monospace;font-weight:500;letter-spacing:-0.04em;fill:#ededef}
+    .tag{font-family:Geist,sans-serif;font-weight:600;letter-spacing:-0.02em;fill:#ededef}
+    .foot{font-family:Geist,sans-serif;font-weight:400;fill:#8e8e97}
+  </style>
+  <rect width="1200" height="630" fill="#0b0b0c"/>
+  <rect y="624" width="1200" height="6" fill="#3b6fc4"/>
+  <svg x="96" y="183" width="189" height="189" viewBox="0 0 56 56">
+    <rect width="56" height="56" rx="8" fill="#6aa5ff"/>
+    <path d="M11 14.5h20.5L44.5 28 31.5 41.5H11z" fill="#0b0b0c" stroke="#0b0b0c" stroke-width="3" stroke-linejoin="round"/>
+    <circle cx="17.5" cy="28" r="3" fill="#6aa5ff"/>
+    <path d="M24 28.5l4 4 7.5-8.5" fill="none" stroke="#6aa5ff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+  <text class="name" x="337" y="319" font-size="151">gitpr</text>
+  <text class="tag" x="96" y="466" font-size="44">Review worktree branches as local pull requests.</text>
+  <text class="foot" x="96" y="574" font-size="25">No server, no remote, no forge.  ·  wyrd.foo</text>
+</svg>
