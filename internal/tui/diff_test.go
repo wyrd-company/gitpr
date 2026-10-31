@@ -5,6 +5,7 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -86,7 +87,7 @@ func TestDiffNavigationRefreshAndReadOnlyActions(t *testing.T) {
 		t.Fatal("diff key must request live review")
 	}
 	report := constructedReview()
-	m.Update(reviewLoadedMsg{id: pr.ID, report: report})
+	m.Update(reviewLoadedMsg{request: m.reviewRequest, id: pr.ID, report: report})
 	if m.screen != diffScreen || m.diffOffset != 0 {
 		t.Fatal("report did not open diff")
 	}
@@ -131,12 +132,13 @@ func TestDiffNavigationRefreshAndReadOnlyActions(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("refresh did not request report")
 	}
-	m.Update(reviewLoadedMsg{id: pr.ID, err: errors.New("review unavailable")})
+	m.Update(reviewLoadedMsg{request: m.reviewRequest, id: pr.ID, err: errors.New("review unavailable")})
 	if m.review.Basis.SourceHeadSHA != "live-source" || m.errMessage != "review unavailable" {
 		t.Fatal("failed refresh lost report or error")
 	}
+	m.handleDiffKeys(testKey("R"))
 	report.Basis.SourceHeadSHA = "refreshed-source"
-	m.Update(reviewLoadedMsg{id: pr.ID, report: report})
+	m.Update(reviewLoadedMsg{request: m.reviewRequest, id: pr.ID, report: report})
 	if m.review.Basis.SourceHeadSHA != "refreshed-source" || m.errMessage != "" {
 		t.Fatal("refresh failed")
 	}
@@ -145,7 +147,7 @@ func TestDiffNavigationRefreshAndReadOnlyActions(t *testing.T) {
 		t.Fatal("escape lost detail")
 	}
 	m.handleDetailKeys(testKey("d"))
-	m.Update(reviewLoadedMsg{id: pr.ID, err: errors.New("failed load")})
+	m.Update(reviewLoadedMsg{request: m.reviewRequest, id: pr.ID, err: errors.New("failed load")})
 	if m.screen != detailScreen || m.errMessage != "failed load" {
 		t.Fatal("initial failure left detail")
 	}
@@ -175,15 +177,173 @@ func TestDiffViewportFitsAfterResize(t *testing.T) {
 func TestReviewResponseAfterLeavingRecordIsIgnored(t *testing.T) {
 	report := constructedReview()
 	m := &Model{screen: listScreen}
-	m.Update(reviewLoadedMsg{id: report.ID, report: report})
+	m.Update(reviewLoadedMsg{request: m.reviewRequest, id: report.ID, report: report})
 	if m.screen != listScreen || m.review != nil {
 		t.Fatal("late report reopened record")
 	}
 	m.currentPR = &model.PR2{ID: "other-record"}
 	m.screen = detailScreen
-	m.Update(reviewLoadedMsg{id: report.ID, err: errors.New("old request error")})
-	m.Update(reviewLoadedMsg{id: report.ID, report: report})
+	m.Update(reviewLoadedMsg{request: m.reviewRequest, id: report.ID, err: errors.New("old request error")})
+	m.Update(reviewLoadedMsg{request: m.reviewRequest, id: report.ID, report: report})
 	if m.screen != detailScreen || m.review != nil || m.errMessage != "" {
 		t.Fatal("late response affected another record")
+	}
+}
+
+// Deliver constructed responses in a controlled order through Update, the
+// Bubble Tea message boundary. No sleeps or service timing are needed.
+func TestRefreshAfterEscapeDoesNotReopenDiff(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		t.Run(fmt.Sprint("error=", failed), func(t *testing.T) {
+			report := constructedReview()
+			pr := model.PR2{ID: report.ID}
+			m := &Model{screen: diffScreen, currentPR: &pr, review: &report}
+			_, cmd := m.Update(testKey("R"))
+			if cmd == nil || m.reviewRequest == nil {
+				t.Fatal("refresh was not started")
+			}
+			response := reviewLoadedMsg{request: m.reviewRequest, id: pr.ID, report: report}
+			if failed {
+				response.err = errors.New("late refresh error")
+			}
+			m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+			if m.reviewRequest != nil {
+				t.Fatal("Escape retained pending request")
+			}
+			m.Update(response)
+			if m.screen != detailScreen || m.review != &report || m.errMessage != "" {
+				t.Fatal("late refresh changed detail after Escape")
+			}
+		})
+	}
+}
+
+func TestOutOfOrderReviewResponsesKeepLatestRequest(t *testing.T) {
+	for _, order := range []string{"older-first", "newer-first"} {
+		for _, failed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/older-error=%t", order, failed), func(t *testing.T) {
+				report := constructedReview()
+				pr := model.PR2{ID: report.ID}
+				m := &Model{screen: diffScreen, currentPR: &pr, review: &report, diffOffset: 3}
+				m.Update(testKey("R"))
+				older := reviewLoadedMsg{request: m.reviewRequest, id: pr.ID, report: report}
+				if failed {
+					older.err = errors.New("superseded error")
+				}
+				m.Update(testKey("R"))
+				newerReport := report
+				newerReport.Basis.SourceHeadSHA = "newer-source"
+				newer := reviewLoadedMsg{request: m.reviewRequest, id: pr.ID, report: newerReport}
+				if older.request == newer.request {
+					t.Fatal("requests share an identity")
+				}
+				if order == "older-first" {
+					m.Update(older)
+					if m.review != &report || m.diffOffset != 3 || m.errMessage != "" {
+						t.Fatal("superseded response changed report while latest pending")
+					}
+				}
+				m.Update(newer)
+				m.Update(testKey("j"))
+				offset := m.diffOffset
+				m.infoMessage = "retained guidance"
+				m.Update(older)
+				// A request settles once, including a duplicate response.
+				m.Update(newer)
+				if m.screen != diffScreen || m.review.Basis.SourceHeadSHA != "newer-source" || m.errMessage != "" || m.infoMessage != "retained guidance" || m.diffOffset != offset {
+					t.Fatal("stale response replaced newer report or view state")
+				}
+			})
+		}
+	}
+}
+
+func TestReviewRequestInvalidatedAcrossViews(t *testing.T) {
+	for _, leave := range []string{"escape-reopen", "leave-record-reopen", "replace-record", "quit"} {
+		t.Run(leave, func(t *testing.T) {
+			report := constructedReview()
+			pr := model.PR2{ID: report.ID}
+			m := &Model{screen: detailScreen, currentPR: &pr}
+			m.Update(testKey("d"))
+			old := reviewLoadedMsg{request: m.reviewRequest, id: pr.ID, report: report}
+			switch leave {
+			case "escape-reopen", "leave-record-reopen":
+				if leave == "escape-reopen" {
+					m.Update(old)
+					m.Update(testKey("R"))
+					old.request = m.reviewRequest
+				}
+				m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+				if leave == "leave-record-reopen" {
+					m.Update(prLoadedMsg{record: pr})
+				}
+				m.Update(testKey("d"))
+			case "replace-record":
+				m.Update(prLoadedMsg{record: pr})
+			case "quit":
+				m.Update(testKey("q"))
+			}
+			screen, review, pending := m.screen, m.review, m.reviewRequest
+			m.Update(old)
+			old.err = errors.New("stale view error")
+			m.Update(old)
+			if m.screen != screen || m.review != review || m.reviewRequest != pending || m.errMessage != "" {
+				t.Fatal("response from previous view applied")
+			}
+			if pending != nil {
+				m.Update(reviewLoadedMsg{request: pending, id: pr.ID, report: report})
+				if m.screen != diffScreen {
+					t.Fatal("new view could not load report")
+				}
+			}
+		})
+	}
+}
+
+func TestReviewCommandCapturesItsRequest(t *testing.T) {
+	// Missing IDs exercise a real read without changing repository state.
+	svc, err := app.NewService(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr := model.PR2{ID: "missing-record"}
+	m := &Model{svc: svc, screen: detailScreen, currentPR: &pr}
+	_, first := m.Update(testKey("d"))
+	request := m.reviewRequest
+	_, second := m.Update(testKey("d"))
+	latest := m.reviewRequest
+	for _, tc := range []struct {
+		cmd  tea.Cmd
+		want *reviewRequest
+	}{{second, latest}, {first, request}} {
+		response := tc.cmd().(reviewLoadedMsg)
+		if response.request != tc.want || response.id != pr.ID || response.err == nil {
+			t.Fatal("command did not capture request identity or service error")
+		}
+	}
+}
+
+func TestReviewResponseRequiresMatchingViewAndRecord(t *testing.T) {
+	for _, change := range []string{"list", "other-record", "no-record"} {
+		t.Run(change, func(t *testing.T) {
+			report := constructedReview()
+			pr := model.PR2{ID: report.ID}
+			m := &Model{screen: detailScreen, currentPR: &pr}
+			m.Update(testKey("d"))
+			response := reviewLoadedMsg{request: m.reviewRequest, id: pr.ID, report: report}
+			switch change {
+			case "list":
+				m.screen = listScreen
+			case "other-record":
+				m.currentPR = &model.PR2{ID: "other-record"}
+			case "no-record":
+				m.currentPR = nil
+			}
+			screen := m.screen
+			m.Update(response)
+			if m.screen != screen || m.review != nil {
+				t.Fatal("response applied outside its view or record")
+			}
+		})
 	}
 }

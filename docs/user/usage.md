@@ -85,7 +85,8 @@ If a branch is missing, the diff reports it instead of showing an empty change.
 Live hunks and remapped threads are unavailable in that state; detail still
 shows the stored thread counts. A load or refresh error appears in the current
 screen; a failed refresh retains the last successfully loaded report and its
-basis.
+basis. Only the latest requested report can update the view. Returning with
+`Esc` discards pending responses, so a late refresh does not reopen the diff.
 
 ## Legacy records
 
