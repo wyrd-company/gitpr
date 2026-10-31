@@ -1,10 +1,6 @@
 /*
 ---
-relationships:
-
-	validates: ../../docs/technical-designs/branch-based-pull-requests.yml
-	references: ../../docs/user/usage.md
-
+relationships: {validates: ../../docs/technical-designs/branch-based-pull-requests.yml, references: ../../docs/user/usage.md}
 ---
 */
 package main
