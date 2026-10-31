@@ -40,16 +40,17 @@ type Model struct {
 	width  int
 	height int
 
-	openRecords []model.PR2
-	allRecords  []model.PR2
-	skipped     int
-	showAll     bool
-	listCursor  int
-	currentPR   *model.PR2
-	infoMessage string
-	errMessage  string
-	review      *app.ReviewReport
-	diffOffset  int
+	openRecords   []model.PR2
+	allRecords    []model.PR2
+	skipped       int
+	showAll       bool
+	listCursor    int
+	currentPR     *model.PR2
+	infoMessage   string
+	errMessage    string
+	review        *app.ReviewReport
+	diffOffset    int
+	reviewRequest *reviewRequest
 }
 
 func Run(svc *app.Service) error {
@@ -114,6 +115,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errMessage = msg.err.Error()
 			return m, nil
 		}
+		m.reviewRequest = nil
 		record := msg.record
 		m.currentPR = &record
 		m.screen = detailScreen
@@ -122,9 +124,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case reviewLoadedMsg:
-		if m.currentPR == nil || m.currentPR.ID != msg.id || m.screen == listScreen {
+		if msg.request == nil || msg.request != m.reviewRequest || m.currentPR == nil || m.currentPR.ID != msg.id || m.screen != msg.request.screen {
 			return m, nil
 		}
+		m.reviewRequest = nil
 		if msg.err != nil {
 			m.errMessage = msg.err.Error()
 			return m, nil
@@ -180,6 +183,7 @@ func (m *Model) View() string {
 func (m *Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
+		m.reviewRequest = nil
 		return m, tea.Quit
 	case "up", "k":
 		if m.listCursor > 0 {
@@ -204,8 +208,10 @@ func (m *Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) handleDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
+		m.reviewRequest = nil
 		return m, tea.Quit
 	case "esc":
+		m.reviewRequest = nil
 		m.screen, m.currentPR, m.errMessage = listScreen, nil, ""
 		return m, m.loadPRsCmd()
 	case "d":

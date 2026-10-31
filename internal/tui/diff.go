@@ -15,24 +15,34 @@ import (
 	"github.com/wyrd-company/gitpr/internal/model"
 )
 
+// reviewRequest binds a response to one request in one view.
+type reviewRequest struct {
+	screen screen
+}
+
 type reviewLoadedMsg struct {
-	id     string
-	report app.ReviewReport
-	err    error
+	request *reviewRequest
+	id      string
+	report  app.ReviewReport
+	err     error
 }
 
 func (m *Model) loadReviewCmd(id string) tea.Cmd {
+	request := &reviewRequest{screen: m.screen}
+	m.reviewRequest = request
 	return func() tea.Msg {
 		report, err := m.svc.ReviewPR(context.Background(), id)
-		return reviewLoadedMsg{id: id, report: report, err: err}
+		return reviewLoadedMsg{request: request, id: id, report: report, err: err}
 	}
 }
 
 func (m *Model) handleDiffKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
+		m.reviewRequest = nil
 		return m, tea.Quit
 	case "esc":
+		m.reviewRequest = nil
 		m.screen = detailScreen
 		m.errMessage = ""
 	case "j", "down":
