@@ -30,9 +30,15 @@ Pushing the resulting tag triggers `.github/workflows/release.yml`. The docs
 unit's tag (`gitpr-docs@<version>`) can point at the same commit, so the
 workflow builds the pushed tag by name. To rebuild a release, run the workflow
 by hand with the `tag` input; then run `Publish to wyrd.foo` with that tag as
-`ref`, because only tag-push release runs trigger it. Separately,
-[`tagver`](https://github.com/wyrd-company/tagver) stamps the currently tagged
-version into `gitpr --version` at build time:
+`ref`, because only tag-push release runs trigger it.
+
+The release workflow automatically bumps the `gitpr` formula in the
+`wyrd-company/homebrew-tools` tap. GoReleaser generates GitHub release notes
+as a commit list. After the workflow succeeds, edit the release notes manually
+when they need to lead with a specific story.
+
+Separately, [`tagver`](https://github.com/wyrd-company/tagver) stamps the
+currently tagged version into `gitpr --version` at build time:
 
 ```bash
 task version
