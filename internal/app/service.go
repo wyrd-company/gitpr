@@ -122,6 +122,15 @@ func (s *Service) repoContext(ctx context.Context, worktree, baseOverride string
 	if err != nil {
 		return nil, "", "", model.Config{}, err
 	}
+	if strings.TrimSpace(baseOverride) == "" {
+		exists, err := repo.BranchExists(ctx, baseBranch)
+		if err != nil {
+			return nil, "", "", model.Config{}, fmt.Errorf("check detected base branch %q: %w", baseBranch, err)
+		}
+		if !exists {
+			return nil, "", "", model.Config{}, fmt.Errorf("detected base branch %q is missing locally; retry create with --base <branch> to select an existing base", baseBranch)
+		}
+	}
 
 	return repo, branch, baseBranch, cfg, nil
 }
