@@ -261,6 +261,9 @@ The list shows open records and toggles to every state. A record opens a
 read-only detail view with its branches, state, latest event, thread summary,
 and closure evidence. Review, verdict, merge, and comment actions use the CLI.
 
+The TUI uses the brand blue on dark and light terminals, with grey help and
+red errors. It respects `NO_COLOR`; the `>` marker identifies the selected row.
+
 - `j` / `k`: move
 - `Enter`: open the selected record
 - `a`: toggle between open and all records

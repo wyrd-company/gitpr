@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/wyrd-company/gitpr/internal/model"
 )
@@ -80,10 +79,6 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m pickerModel) View() string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
-	cursorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
-	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-
 	var lines []string
 	lines = append(lines, titleStyle.Render(m.title))
 	lines = append(lines, "")

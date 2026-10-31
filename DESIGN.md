@@ -4,7 +4,7 @@ name: gitpr
 description: >-
   The visual identity of gitpr: a Git ref tag that holds a check on a blue
   wyrd.foo product tile, a dark social image, and a terminal UI that uses the
-  terminal's own font and a small ANSI 256-color palette. Colour tokens
+  terminal's own font and a small adaptive brand palette. Colour tokens
   without a suffix are the dark theme; tokens with `-light` are the light
   theme.
 colors:
@@ -16,11 +16,16 @@ colors:
   text: "#ededef"
   text-faint: "#8e8e97"
   header-line: "#3b6fc4"
-  tui-title: "#5fffd7"
-  tui-cursor: "#ff87d7"
+  tui-title: "#6aa5ff"
+  tui-title-light: "#0b4fa8"
+  tui-cursor: "#6aa5ff"
+  tui-cursor-light: "#0b4fa8"
   tui-muted: "#808080"
-  tui-info: "#87d7ff"
+  tui-muted-light: "#767676"
+  tui-info: "#6aa5ff"
+  tui-info-light: "#0b4fa8"
   tui-error: "#ff5f5f"
+  tui-error-light: "#b42318"
 typography:
   product-name:
     fontFamily: Geist Mono
@@ -95,6 +100,21 @@ components:
   tui-error:
     textColor: "{colors.tui-error}"
     typography: "{typography.terminal}"
+  tui-title-light:
+    textColor: "{colors.tui-title-light}"
+    typography: "{typography.terminal-strong}"
+  tui-row-selected-light:
+    textColor: "{colors.tui-cursor-light}"
+    typography: "{typography.terminal-strong}"
+  tui-help-light:
+    textColor: "{colors.tui-muted-light}"
+    typography: "{typography.terminal}"
+  tui-info-light:
+    textColor: "{colors.tui-info-light}"
+    typography: "{typography.terminal}"
+  tui-error-light:
+    textColor: "{colors.tui-error-light}"
+    typography: "{typography.terminal}"
 ---
 
 # gitpr design system
@@ -128,9 +148,13 @@ Two surfaces carry the identity:
   tile: near-black on `primary`, white on `primary-light`.
 - **Page, text, text faint, header line.** The social image only. They are
   the wyrd.foo dark theme values.
-- **Terminal palette (`tui-*`).** ANSI 256-color indexes, given here as their
-  xterm hex values: title 86, selected row 212, muted 244, info 117 and
-  error 203. The terminal theme decides the final colour.
+- **Terminal palette (`tui-*`).** Titles, selected rows and info use the primary
+  blue: `#6aa5ff` on dark backgrounds and `#0b4fa8` on light backgrounds.
+  Help and empty states use muted grey (`#808080`, light `#767676`). Errors
+  use red (`#ff5f5f`, light `#b42318`). The terminal colour profile selects
+  the supported approximation. With colour off, the `>` selection marker,
+  bold titles where supported, and text labels carry the same information.
+  The TUI respects `NO_COLOR` and the terminal colour capability.
 
 ## Typography
 
