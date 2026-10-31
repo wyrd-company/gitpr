@@ -13,8 +13,9 @@ without a server or working-tree data directory.
 
 ## Review model
 
-A pull request binds a source branch to a base branch. The record follows those
-branches while work changes; it does not freeze head commits or store a diff.
+A pull request binds a source branch to a branch or immutable tag base. Branch
+bases follow live heads; tag bases preserve the full ref, tag object, and peeled
+commit. The record stores no diff.
 `review` resolves the live heads and computes the diff when requested.
 
 Approve and reject append immutable review events. Each event identifies the
@@ -22,6 +23,11 @@ exact source head, base head, merge base, verdict, timestamp, and preceding
 event. Approval is separate from merge: approval records a judgment, while merge
 requires the latest event to be accepted, both live heads to remain equal to the
 reviewed pair, and the reviewed history to be a strict fast-forward.
+
+Tag verdicts refuse deletion or drift of the original tag, including a changed
+annotation at the same commit. Merge refuses tag bases. Close as integrated with
+destination and commit evidence after external integration or verification;
+closure never changes a tag.
 
 Threads attach to a file range in a reviewed head pair or to the PR as a whole.
 Anchored ranges move with unchanged content and remain visible as outdated when

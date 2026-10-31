@@ -55,7 +55,7 @@ design-challenges:
 
 proposed-design:
   high-level-overview: >-
-    A PR binds a source branch to a base branch and stays open while the work
+    A PR binds a source branch to a branch or immutable tag base and stays open while the work
     is in flight. A verdict creates a review event: an immutable, append-only
     record of the exact source head, base head, and merge base it judged,
     carrying exactly one of two verdicts, accepted or rejected. Approval
@@ -65,6 +65,24 @@ proposed-design:
     as an atomic compare-and-swap on the base ref. Comment threads belong to
     the PR, re-anchor across events, and are explicitly resolvable. The PR
     ends as merged, or closed with a machine-readable reason.
+
+  immutable-tag-bases: >-
+    A base can be a branch or a lightweight or annotated tag that peels to a
+    commit. Unqualified names prefer branches; refs/tags/<name> selects a tag
+    explicitly. A tag base stores base_tag with ref, object_sha, and commit_sha,
+    and base_branch carries the full tag ref. Records without base_tag retain
+    branch semantics. The tag object and peeled commit are pinned from creation
+    under refs/gitpr/pr/<id>/tag/{object,commit} until record deletion. Tag
+    bases do not change the saved default branch. Review resolves the original
+    tag identity and reports its peeled commit as base_head_sha. Both verdicts
+    refuse tag loss or drift, including replacement of an annotated object
+    with the same peeled commit, and require the expected base to equal the
+    stored commit. The verdict transaction verifies the tag ref's object ID
+    atomically with event creation. Merge refuses tag bases before mutation.
+    External integration or verification terminates with close integrated and
+    destination/commit or patch-identity evidence, without writing any tag,
+    branch, or worktree. Metadata edits, explicit-basis comments, and closure
+    remain possible after tag loss. A changed tag requires a new PR.
 
   storage-model: >-
     Metadata authority stays at refs/gitpr/pr/<id>/meta. A record carries
@@ -175,7 +193,7 @@ proposed-design:
     merge. A branch that moves between the live-head check and the event
     append does not invalidate the event: the event truthfully records the
     pair that was judged, and the merge gate's own live-head comparison keeps
-    any unreviewed movement unmergeable. Reject does not check live-head
+    any unreviewed movement unmergeable. For branch bases, reject does not check live-head
     drift: it records the rejected event for the expected pair as read. A
     rejection certifies nothing
     mergeable, so drift cannot launder unreviewed commits through it, and

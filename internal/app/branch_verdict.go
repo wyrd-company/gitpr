@@ -71,6 +71,12 @@ func (s *Service) appendVerdict(ctx context.Context, id string, heads ExpectedHe
 		if err != nil {
 			return model.PR2{}, "", err
 		}
+		if err := validateTagBase(ctx, repo, pr); err != nil {
+			return model.PR2{}, "", err
+		}
+		if pr.BaseTag != nil && heads.Base != pr.BaseTag.CommitSHA {
+			return model.PR2{}, "", fmt.Errorf("expected base %s differs from immutable tag commit %s", heads.Base, pr.BaseTag.CommitSHA)
+		}
 		if checkLive {
 			if err := validateLiveHeads(ctx, repo, pr, heads); err != nil {
 				return model.PR2{}, "", err
@@ -123,6 +129,9 @@ func validateLiveHeads(ctx context.Context, repo *gitutil.Repo, pr model.PR2, ex
 	}
 	if liveSource != expected.Source {
 		return fmt.Errorf("source branch %q drifted: expected head %s, live head %s", pr.SourceBranch, expected.Source, liveSource)
+	}
+	if pr.BaseTag != nil {
+		return validateTagBase(ctx, repo, pr)
 	}
 	baseExists, err := repo.BranchExists(ctx, pr.BaseBranch)
 	if err != nil {

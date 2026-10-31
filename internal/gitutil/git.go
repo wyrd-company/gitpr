@@ -463,3 +463,23 @@ func splitNonEmpty(raw string) []string {
 	}
 	return out
 }
+
+// TagIdentity resolves only a full, valid tag ref and peels that exact object.
+func (r *Repo) TagIdentity(ctx context.Context, ref string) (string, string, error) {
+	if !strings.HasPrefix(ref, "refs/tags/") {
+		return "", "", errors.New("expected a full refs/tags/ identity")
+	}
+	if _, err := runGit(ctx, r.WorktreePath, "check-ref-format", ref); err != nil {
+		return "", "", err
+	}
+	object, err := runGit(ctx, r.WorktreePath, "rev-parse", "--verify", ref)
+	if err != nil {
+		return "", "", err
+	}
+	object = strings.TrimSpace(object)
+	commit, err := runGit(ctx, r.WorktreePath, "rev-parse", "--verify", object+"^{commit}")
+	if err != nil {
+		return "", "", err
+	}
+	return object, strings.TrimSpace(commit), nil
+}

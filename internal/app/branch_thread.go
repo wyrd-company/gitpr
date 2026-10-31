@@ -127,6 +127,16 @@ func resolveCommentHeads(ctx context.Context, repo *gitutil.Repo, pr model.PR2, 
 	} else if !exists {
 		return nil, fmt.Errorf("source branch %q is missing; pass the explicit pair from gitpr review with --basis or --source-head and --base-head", pr.SourceBranch)
 	}
+	if pr.BaseTag != nil {
+		if err := validateTagBase(ctx, repo, pr); err != nil {
+			return nil, err
+		}
+		source, err := repo.HeadSHA(ctx, "refs/heads/"+pr.SourceBranch)
+		if err != nil {
+			return nil, err
+		}
+		return &ExpectedHeads{Source: source, Base: pr.BaseTag.CommitSHA}, nil
+	}
 	if exists, err := repo.BranchExists(ctx, pr.BaseBranch); err != nil {
 		return nil, err
 	} else if !exists {

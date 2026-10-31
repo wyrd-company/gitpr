@@ -16,6 +16,9 @@ func (s *Service) MergePR(ctx context.Context, id string, cleanup bool) (model.P
 	if err != nil {
 		return model.PR2{}, "", err
 	}
+	if pr.BaseTag != nil {
+		return model.PR2{}, "", fmt.Errorf("cannot merge into immutable tag %s; use close --reason integrated --destination <branch> --commit <sha> to record external integration", pr.BaseTag.Ref)
+	}
 	if pr.State != model.PRStateOpen {
 		return model.PR2{}, "", fmt.Errorf("cannot merge PR %s in %s state; only open branch-based PRs can merge", pr.ID, pr.State)
 	}
