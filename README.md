@@ -259,12 +259,18 @@ gitpr tui
 
 The list shows open records and toggles to every state. A record opens a
 read-only detail view with its branches, state, latest event, thread summary,
-and closure evidence. Review, verdict, merge, and comment actions use the CLI.
+and closure evidence. Press `d` to load the live review diff. It shows each file's
+hunks with old/new line numbers, the source/base heads and merge base, and
+threads with their anchors, comments, resolution status, and outdated state.
+Review, verdict, merge, and comment actions use the CLI.
 
 - `j` / `k`: move
 - `Enter`: open the selected record
 - `a`: toggle between open and all records
-- `Esc`: return to the list
+- `d`: open the live diff from a record
+- In the diff, `j` / `k` or arrows scroll; `PgUp` / `PgDn` page;
+  `g` / `G` go to the start/end; `R` refreshes the live report
+- `Esc`: return from diff to detail, or from detail to the list
 - `q`: quit
 
 ## Legacy records

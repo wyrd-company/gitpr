@@ -74,7 +74,18 @@ collectable.
 
 The CLI accepts a full ULID or a unique prefix. `show` and `comments` open a
 picker without an ID. The TUI lists records and provides a read-only detail
-view; actions use the CLI review and basis flow.
+view. Press `d` in detail to read the live review report: per-file hunks with
+old/new line numbers, source/base heads, merge base, and existing threads with
+anchors, comments, resolution status, and outdated state. Use `j`/`k` or arrow
+keys to scroll, `PgUp`/`PgDn` to page, `g`/`G` for start/end, and `R` to refresh.
+`Esc` returns to detail, then to the list. Actions use the CLI review and basis
+flow; the diff does not write verdicts, merges, or comments.
+
+If a branch is missing, the diff reports it instead of showing an empty change.
+Live hunks and remapped threads are unavailable in that state; detail still
+shows the stored thread counts. A load or refresh error appears in the current
+screen; a failed refresh retains the last successfully loaded report and its
+basis.
 
 ## Legacy records
 
