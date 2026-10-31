@@ -18,6 +18,7 @@ type screen int
 const (
 	listScreen screen = iota
 	detailScreen
+	diffScreen
 )
 
 type prLoadedMsg struct {
@@ -47,6 +48,8 @@ type Model struct {
 	currentPR   *model.PR2
 	infoMessage string
 	errMessage  string
+	review      *app.ReviewReport
+	diffOffset  int
 }
 
 func Run(svc *app.Service) error {
@@ -118,6 +121,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errMessage = ""
 		return m, nil
 
+	case reviewLoadedMsg:
+		if m.currentPR == nil || m.currentPR.ID != msg.id || m.screen == listScreen {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.errMessage = msg.err.Error()
+			return m, nil
+		}
+		m.review = &msg.report
+		m.diffOffset = 0
+		m.screen = diffScreen
+		m.errMessage, m.infoMessage = "", ""
+		return m, nil
+
 	case listLoadedMsg:
 		if msg.err != nil {
 			m.errMessage = msg.err.Error()
@@ -133,6 +150,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if m.screen == listScreen {
 			return m.handleListKeys(msg)
+		}
+		if m.screen == diffScreen {
+			return m.handleDiffKeys(msg)
 		}
 		return m.handleDetailKeys(msg)
 	}
@@ -150,6 +170,8 @@ func (m *Model) View() string {
 		return m.renderList()
 	case detailScreen:
 		return m.renderDetail()
+	case diffScreen:
+		return m.renderDiff()
 	default:
 		return ""
 	}
@@ -186,6 +208,10 @@ func (m *Model) handleDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.screen, m.currentPR, m.errMessage = listScreen, nil, ""
 		return m, m.loadPRsCmd()
+	case "d":
+		if m.currentPR != nil {
+			return m, m.loadReviewCmd(m.currentPR.ID)
+		}
 	case "c", "r", "m":
 		m.infoMessage = "PR actions use the CLI: gitpr review <id>, approve/reject with its basis, gitpr merge <id>, or gitpr comment <id>."
 	}
@@ -291,7 +317,7 @@ func (m *Model) renderDetail() string {
 			lines = append(lines, "Closure note: "+pr.Closure.Note)
 		}
 	}
-	lines = append(lines, "", mutedStyle.Render("Read-only PR view. Keys: c/r/m show CLI guidance  esc back  q quit"))
+	lines = append(lines, "", mutedStyle.Render("Read-only PR view. Keys: d diff  c/r/m show CLI guidance  esc back  q quit"))
 	if m.infoMessage != "" {
 		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Render(m.infoMessage))
 	}
