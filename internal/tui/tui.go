@@ -2,12 +2,9 @@ package tui
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
 
 	"github.com/wyrd-company/gitpr/internal/app"
 	"github.com/wyrd-company/gitpr/internal/model"
@@ -56,47 +53,12 @@ type Model struct {
 func Run(svc *app.Service) error {
 	m := &Model{svc: svc, screen: listScreen}
 
-	// Force a color-capable renderer for the TUI even when the parent shell is
-	// running with TERM=dumb/NO_COLOR. The review UI uses color as core signal.
-	lipgloss.SetColorProfile(termenv.ANSI256)
-
 	program := tea.NewProgram(
 		m,
 		tea.WithAltScreen(),
-		tea.WithEnvironment(colorCapableEnv()),
 	)
 	_, err := program.Run()
 	return err
-}
-
-func colorCapableEnv() []string {
-	env := make([]string, 0, len(os.Environ())+2)
-	sawTerm := false
-	sawColorTerm := false
-
-	for _, entry := range os.Environ() {
-		switch {
-		case strings.HasPrefix(entry, "NO_COLOR="):
-			continue
-		case strings.HasPrefix(entry, "TERM="):
-			env = append(env, "TERM=xterm-256color")
-			sawTerm = true
-		case strings.HasPrefix(entry, "COLORTERM="):
-			env = append(env, "COLORTERM=truecolor")
-			sawColorTerm = true
-		default:
-			env = append(env, entry)
-		}
-	}
-
-	if !sawTerm {
-		env = append(env, "TERM=xterm-256color")
-	}
-	if !sawColorTerm {
-		env = append(env, "COLORTERM=truecolor")
-	}
-
-	return env
 }
 
 func (m *Model) Init() tea.Cmd {
@@ -225,10 +187,6 @@ func (m *Model) handleDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) renderList() string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
-	cursorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
-	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-
 	var lines []string
 	title := "Open PRs"
 	if m.showAll {
@@ -270,7 +228,7 @@ func (m *Model) renderList() string {
 		lines = append(lines, mutedStyle.Render(app.SkippedRecordsMessage(m.skipped)))
 	}
 	if m.errMessage != "" {
-		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render(m.errMessage))
+		lines = append(lines, errorStyle.Render(m.errMessage))
 	}
 
 	return strings.Join(lines, "\n")
@@ -281,8 +239,6 @@ func (m *Model) renderDetail() string {
 	if pr == nil {
 		return ""
 	}
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
-	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	lines := []string{
 		titleStyle.Render(fmt.Sprintf("PR %s: %s", shortID(pr.ID), pr.Title)),
 		fmt.Sprintf("Source: %s  Base: %s  State: %s", pr.SourceBranch, pr.BaseBranch, pr.State),
@@ -325,10 +281,10 @@ func (m *Model) renderDetail() string {
 	}
 	lines = append(lines, "", mutedStyle.Render("Read-only PR view. Keys: d diff  c/r/m show CLI guidance  esc back  q quit"))
 	if m.infoMessage != "" {
-		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Render(m.infoMessage))
+		lines = append(lines, infoStyle.Render(m.infoMessage))
 	}
 	if m.errMessage != "" {
-		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render(m.errMessage))
+		lines = append(lines, errorStyle.Render(m.errMessage))
 	}
 	return strings.Join(lines, "\n")
 }

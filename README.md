@@ -295,6 +295,9 @@ hunks with old/new line numbers, the source/base heads and merge base, and
 threads with their anchors, comments, resolution status, and outdated state.
 Review, verdict, merge, and comment actions use the CLI.
 
+The TUI uses the brand blue on dark and light terminals, with grey help and
+red errors. It respects `NO_COLOR`; the `>` marker identifies the selected row.
+
 - `j` / `k`: move
 - `Enter`: open the selected record
 - `a`: toggle between open and all records
