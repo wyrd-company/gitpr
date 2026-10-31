@@ -11,7 +11,7 @@ order: 4
 | `gitpr create`                   | Create an open PR. Requires `--title`; accepts `--description`, `--worktree`, and `--base`. Refuses a duplicate open source/base pair.                                                                                                             |
 | `gitpr review <id>`              | Print the live basis, diff, containment, latest event, interdiff, and projected thread state as YAML. Performs no writes.                                                                                                                                       |
 | `gitpr approve <id>`             | Append an accepted event. Requires `--basis <source>:<base>` or both head flags; refuses missing branches, live drift, terminal PRs, and noncanonical heads. Does not merge.                                                                                    |
-| `gitpr reject <id>`              | Append a rejected event for an expected pair without a live-drift check. Alias: `request-changes`.                                                                                                                |
+| `gitpr reject <id>`              | Append a rejected event for an expected pair. Branch drift is allowed; tag loss or drift refuses. Alias: `request-changes`.                                                                                                                |
 | `gitpr merge <id>`               | Merge an eligible latest accepted event atomically. `--cleanup` removes the source worktree and branch after success.                                                                                                             |
 | `gitpr comment <id>`             | Add an anchored thread with `--file`, `--line-start`, optional `--line-end`, and `--side old\|new`; use `--pr-level` or reply with `--thread`. `--text` is required. Optional basis flags override live heads. |
 | `gitpr comments [id]`            | Print a record's threads as YAML. Opens a picker without an ID.                                                                                                                                                                            |
@@ -35,7 +35,7 @@ order: 4
 - Verdict and explicit comment heads must be full 40-character lowercase commit
   IDs.
 - Approve refuses source deletion and source/base drift. Reject records the
-  supplied existing pair despite drift.
+  supplied existing pair despite branch drift. Tag verdicts refuse tag loss or drift.
 - Verdicts and merge refuse terminal records.
 - Merge requires a latest accepted event, exact live heads, and strict
   fast-forward ancestry.
@@ -54,3 +54,29 @@ order: 4
 Merge and close retain metadata, event pins, remaining anchor pins, and state
 indexes. Default listing hides terminal records, but filters and ID-addressed
 commands continue to find them. Only `delete --force` removes the namespace.
+
+## Tag base contract
+
+`create --base` accepts a branch, a lightweight tag, or an annotated tag that
+peels to a commit. Unqualified names prefer branches. `refs/heads/<name>`
+selects a branch; `refs/tags/<name>` selects a tag. Source identities remain
+branches. Tag bases do not replace the saved default branch.
+
+Tag records add `base_tag: {ref, object_sha, commit_sha}` to schema 2 and use
+the full tag ref as `base_branch`. Records without `base_tag` retain branch
+semantics. The original tag object and peeled commit are pinned under
+`refs/gitpr/pr/<id>/tag/{object,commit}` until record deletion. Review reports
+`base_tag` alongside its basis; `base_head_sha` is the peeled commit.
+
+Both verdicts require the stored tag identity to remain live and unchanged and
+the expected base head to equal its peeled commit. A ref transaction verifies
+the tag object with the verdict append. Missing tags, changed commits, and
+changed annotated objects refuse without writing a verdict. Branch rejection
+still accepts a historical expected pair without checking branch drift.
+
+`merge` refuses tag bases without mutation. The terminal integration action is
+`close --reason integrated --destination <branch> --commit <sha>` (or
+`--patch-id <id>`). It records external integration or verification evidence;
+it never moves the tag or performs integration. Abandoned and superseded
+closure, edits, and explicit-basis comments remain supported after tag loss.
+A replacement tag needs a new review record.

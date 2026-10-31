@@ -114,3 +114,33 @@ git for-each-ref --format='%(refname)' \
 
 Removal is irreversible, and the commits the record pinned become collectable
 by Git.
+
+## Review against an immutable tag
+
+```bash
+gitpr create --title "Release review" --base refs/tags/1.2.3
+gitpr review <id>
+gitpr approve <id> --basis <source-head>:<base-head>
+gitpr close <id> --reason integrated --destination <branch> --commit <sha>
+```
+
+Lightweight and annotated tags are supported when they peel to a commit.
+Use `refs/tags/<name>` to choose a tag when a branch has the same name;
+unqualified names prefer branches. A tag review does not set the default branch.
+The review output includes `base_tag.ref`, `base_tag.object_sha`, and
+`base_tag.commit_sha`; `basis.base_head_sha` is the peeled commit.
+
+Approve and reject require the original tag ref and object to remain unchanged.
+Replacing an annotation counts as drift even if the commit stays the same.
+Deletion or drift refuses the verdict without changing review refs. Create a
+new PR to review the replacement tag. Original objects remain pinned until
+record deletion. Explicit-basis comments, metadata edits, and closure remain
+available after tag loss; live-basis review and comments report the missing or
+changed tag.
+
+`gitpr merge` refuses a tag base, including with `--cleanup`. Tags are never
+integration destinations. Close as `integrated` to record external integration
+or verification, with a destination branch and resulting commits or patch IDs.
+Closure records evidence; it does not perform or prove external integration,
+move refs, or remove worktrees. An accepted event records approval separately.
+You can also close as abandoned or superseded.
