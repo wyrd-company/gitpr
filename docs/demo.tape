@@ -13,18 +13,19 @@ Set Shell "bash"
 Set FontSize 20
 Set Width 1200
 Set Height 720
-Set Theme "Catppuccin Mocha"
+Set Theme { "name": "gitpr", "background": "#0b0b0c", "foreground": "#ededef", "black": "#0b0b0c", "red": "#ff5f5f", "green": "#87af87", "yellow": "#d7af5f", "blue": "#6aa5ff", "magenta": "#8e8e97", "cyan": "#6aa5ff", "white": "#ededef", "brightBlack": "#808080", "brightRed": "#ff5f5f", "brightGreen": "#87af87", "brightYellow": "#d7af5f", "brightBlue": "#6aa5ff", "brightMagenta": "#8e8e97", "brightCyan": "#6aa5ff", "brightWhite": "#ffffff" }
 Set Padding 24
 Set Margin 12
-Set MarginFill "#11111b"
+Set MarginFill "#0b0b0c"
 Set BorderRadius 8
 Set WindowBar "Colorful"
 Set TypingSpeed 35ms
 
 Hide
+Type "unset NO_COLOR; export TERM=xterm-256color COLORTERM=truecolor COLORFGBG='15;0'" Enter
 Type "export GIT_AUTHOR_NAME='Demo User' GIT_AUTHOR_EMAIL='demo@example.invalid'" Enter
 Type "export GIT_COMMITTER_NAME='Demo User' GIT_COMMITTER_EMAIL='demo@example.invalid'" Enter
-Type "rm -rf /tmp/gitpr-vhs-demo && mkdir -p /tmp/gitpr-vhs-demo/main && cd /tmp/gitpr-vhs-demo/main" Enter
+Type `DEMO_DIR=$PWD/.tmp/gitpr-vhs-demo; rm -rf "$DEMO_DIR"; mkdir -p "$DEMO_DIR/main"; cd "$DEMO_DIR/main"` Enter
 Type "git init -q -b main" Enter
 Type "echo 'recipe app' > notes.txt && git add notes.txt && git commit -q -m 'Initial notes'" Enter
 Type "git worktree add -b feature/add-step ../feature" Enter
