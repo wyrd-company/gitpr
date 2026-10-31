@@ -463,3 +463,19 @@ func splitNonEmpty(raw string) []string {
 	}
 	return out
 }
+
+// DiffEntries returns raw tree metadata keyed by exact path, without generating
+// patches, running text converters, or detecting renames. NUL framing preserves
+// whitespace and newlines in paths.
+func (r *Repo) DiffEntries(ctx context.Context, fromRef, toRef string) (map[string]string, error) {
+	raw, err := runGit(ctx, r.WorktreePath, "diff-tree", "-r", "--raw", "--no-abbrev", "--no-renames", "--no-ext-diff", "--no-textconv", "--no-commit-id", "-z", fromRef, toRef, "--")
+	if err != nil {
+		return nil, err
+	}
+	fields := strings.Split(raw, "\x00")
+	entries := make(map[string]string)
+	for i := 0; i+1 < len(fields); i += 2 {
+		entries[fields[i+1]] = fields[i]
+	}
+	return entries, nil
+}

@@ -26,20 +26,42 @@ type InterdiffFile struct {
 	CurrentHunks  int    `yaml:"current_hunks"`
 }
 
+// InterdiffSummary counts changes to diff entries, comparing blob IDs and modes.
+// Each compared diff represents renames as deletion and addition entries.
+// No patches are computed.
+type InterdiffSummary struct {
+	PreviousFiles int `yaml:"previous_files"`
+	CurrentFiles  int `yaml:"current_files"`
+	Added         int `yaml:"added_to_diff"`
+	Removed       int `yaml:"removed_from_diff"`
+	Changed       int `yaml:"changed"`
+	Unchanged     int `yaml:"unchanged"`
+}
+
 type ReviewReport struct {
-	ID             string             `yaml:"id"`
-	SourceBranch   string             `yaml:"source_branch"`
-	BaseBranch     string             `yaml:"base_branch"`
-	Basis          ReviewBasis        `yaml:"basis"`
-	Diff           []model.FileDiff   `yaml:"diff,omitempty"`
-	LatestEvent    *model.ReviewEvent `yaml:"latest_event,omitempty"`
-	InterdiffStyle string             `yaml:"interdiff_style,omitempty"`
-	Interdiff      []InterdiffFile    `yaml:"interdiff,omitempty"`
-	VerdictHint    string             `yaml:"verdict_hint,omitempty"`
-	Threads        []model.Thread     `yaml:"threads,omitempty"`
+	ID               string             `yaml:"id"`
+	SourceBranch     string             `yaml:"source_branch"`
+	BaseBranch       string             `yaml:"base_branch"`
+	Basis            ReviewBasis        `yaml:"basis"`
+	Diff             []model.FileDiff   `yaml:"diff,omitempty"`
+	LatestEvent      *model.ReviewEvent `yaml:"latest_event,omitempty"`
+	InterdiffStyle   string             `yaml:"interdiff_style,omitempty"`
+	Interdiff        []InterdiffFile    `yaml:"interdiff,omitempty"`
+	InterdiffSummary *InterdiffSummary  `yaml:"interdiff_summary,omitempty"`
+	VerdictHint      string             `yaml:"verdict_hint,omitempty"`
+	Threads          []model.Thread     `yaml:"threads,omitempty"`
 }
 
 func (s *Service) ReviewPR(ctx context.Context, id string) (ReviewReport, error) {
+	return s.reviewPR(ctx, id, false)
+}
+
+// ReviewPRSummary reports live review state without computing patch bodies.
+func (s *Service) ReviewPRSummary(ctx context.Context, id string) (ReviewReport, error) {
+	return s.reviewPR(ctx, id, true)
+}
+
+func (s *Service) reviewPR(ctx context.Context, id string, summary bool) (ReviewReport, error) {
 	pr, _, err := s.store.LoadPR(id)
 	if err != nil {
 		return ReviewReport{}, err
@@ -89,11 +111,23 @@ func (s *Service) ReviewPR(ctx context.Context, id string) (ReviewReport, error)
 		return ReviewReport{}, err
 	}
 	report.Basis.BaseContained = &contained
-	report.Diff, err = repo.FileDiffs(ctx, report.Basis.MergeBaseSHA, report.Basis.SourceHeadSHA)
-	if err != nil {
-		return ReviewReport{}, err
+	if !summary {
+		report.Diff, err = repo.FileDiffs(ctx, report.Basis.MergeBaseSHA, report.Basis.SourceHeadSHA)
+		if err != nil {
+			return ReviewReport{}, err
+		}
 	}
+
 	report.Threads = remapThreads(ctx, repo, pr.Threads, ExpectedHeads{Source: report.Basis.SourceHeadSHA, Base: report.Basis.BaseHeadSHA})
+	if summary {
+		for i := range report.Threads {
+			report.Threads[i].Comments = nil
+		}
+		if report.LatestEvent == nil {
+			return report, nil
+		}
+		return s.summarizeReviewInterdiff(ctx, repo, report)
+	}
 	if report.LatestEvent == nil {
 		return report, nil
 	}
@@ -145,4 +179,35 @@ func diffsByPath(diffs []model.FileDiff) map[string]model.FileDiff {
 		result[path] = diff
 	}
 	return result
+}
+
+func (s *Service) summarizeReviewInterdiff(ctx context.Context, repo *gitutil.Repo, report ReviewReport) (ReviewReport, error) {
+	previous, err := repo.DiffEntries(ctx, report.LatestEvent.MergeBaseSHA, report.LatestEvent.SourceHeadSHA)
+	if err != nil {
+		return ReviewReport{}, err
+	}
+	current, err := repo.DiffEntries(ctx, report.Basis.MergeBaseSHA, report.Basis.SourceHeadSHA)
+	if err != nil {
+		return ReviewReport{}, err
+	}
+	counts := &InterdiffSummary{PreviousFiles: len(previous), CurrentFiles: len(current)}
+	for path, entry := range current {
+		before, exists := previous[path]
+		switch {
+		case !exists:
+			counts.Added++
+		case before == entry:
+			counts.Unchanged++
+		default:
+			counts.Changed++
+		}
+	}
+	for path := range previous {
+		if _, exists := current[path]; !exists {
+			counts.Removed++
+		}
+	}
+	report.InterdiffStyle = "file counts by blob IDs and modes (renames counted as removal and addition)"
+	report.InterdiffSummary = counts
+	return report, nil
 }

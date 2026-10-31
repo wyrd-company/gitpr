@@ -9,7 +9,7 @@ order: 4
 | Command                          | Description and principal flags                                                                                                                                                                                                                                 |
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `gitpr create`                   | Create an open PR. Requires `--title`; accepts `--description`, `--worktree`, and `--base`. Refuses a duplicate open source/base pair.                                                                                                             |
-| `gitpr review <id>`              | Print the live basis, diff, containment, latest event, interdiff, and projected thread state as YAML. Performs no writes.                                                                                                                                       |
+| `gitpr review <id>`              | Print the live basis, diff, containment, latest event, interdiff, and projected thread state as YAML. `--summary` omits patches and comment bodies and reports bounded interdiff file counts. Performs no writes.                                                                                                                                       |
 | `gitpr approve <id>`             | Append an accepted event. Requires `--basis <source>:<base>` or both head flags; refuses missing branches, live drift, terminal PRs, and noncanonical heads. Does not merge.                                                                                    |
 | `gitpr reject <id>`              | Append a rejected event for an expected pair without a live-drift check. Alias: `request-changes`.                                                                                                                |
 | `gitpr merge <id>`               | Merge an eligible latest accepted event atomically. `--cleanup` removes the source worktree and branch after success.                                                                                                             |
@@ -54,3 +54,24 @@ order: 4
 Merge and close retain metadata, event pins, remaining anchor pins, and state
 indexes. Default listing hides terminal records, but filters and ID-addressed
 commands continue to find them. Only `delete --force` removes the namespace.
+
+## Review summary
+
+`gitpr review <id> --summary` keeps the machine-readable `basis`, containment,
+latest review event (including its verdict and judged heads), `verdict_hint`,
+and projected thread IDs, kinds, statuses, anchors, and outdated flags.
+Thread comments and diff bodies are omitted. A missing source or base is
+reported in the basis, as in the default review.
+
+When a prior event exists, `interdiff_summary` has fixed fields:
+`previous_files`, `current_files`, `added_to_diff`, `removed_from_diff`,
+`changed`, and `unchanged`. These compare diff entries by blob IDs and file
+modes between the latest event's merge-base/source pair and the live pair.
+Each compared diff treats renames as a deletion and an addition. The counters
+track membership in those diffs: a path that changes from a modification to a
+deletion is `changed`, rather than `removed_from_diff`. Binary and mode-only changes are
+included. Counts do not measure hunk or line changes. No per-file list or patch
+is computed. Without a prior event, the interdiff fields are omitted.
+
+Both review modes perform no writes. Summary containment does not establish
+that a PR meets every merge gate; `gitpr merge` still checks eligibility.
