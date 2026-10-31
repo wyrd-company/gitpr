@@ -160,6 +160,14 @@ contains a machine-readable `basis`, the live diff and base containment,
 projected thread state, the latest event, and an interdiff when a prior event
 exists. Review performs no writes.
 
+Use `gitpr review <pr-id> --summary` for the live basis, containment, latest
+verdict, and projected thread state without patch or comment bodies. When a
+prior event exists, `interdiff_summary` reports only file counts: previous,
+current, added to the diff, removed from the diff, changed, and unchanged.
+Counts compare blob IDs and file modes. Each compared diff represents a rename
+as a deletion and an addition. They do not measure hunk or line changes. No patch bodies are computed.
+The default output is unchanged.
+
 Record a verdict with the exact reviewed basis:
 
 ```bash
