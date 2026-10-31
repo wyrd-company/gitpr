@@ -23,16 +23,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: refs/tags/${{ env.RELEASE_TAG }}
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
+          cache-dependency-path: go.sum
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
@@ -44,7 +45,7 @@ jobs:
           GORELEASER_CURRENT_TAG: ${{ env.RELEASE_TAG }}
 
       - name: Check out Homebrew tap
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: wyrd-company/homebrew-tools
           ref: main
