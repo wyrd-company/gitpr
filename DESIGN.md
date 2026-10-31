@@ -154,7 +154,9 @@ Two surfaces carry the identity:
   use red (`#ff5f5f`, light `#b42318`). The terminal colour profile selects
   the supported approximation. With colour off, the `>` selection marker,
   bold titles where supported, and text labels carry the same information.
-  The TUI respects `NO_COLOR` and the terminal colour capability.
+  The TUI respects `NO_COLOR` and the terminal colour capability. Bubble Tea
+  downsamples colour at output. Each model selects its palette from terminal
+  background responses, with `COLORFGBG` as the fallback.
 
 ## Typography
 

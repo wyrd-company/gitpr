@@ -304,6 +304,11 @@ Review, verdict, merge, and comment actions use the CLI.
 The TUI uses the brand blue on dark and light terminals, with grey help and
 red errors. It respects `NO_COLOR`; the `>` marker identifies the selected row.
 
+The terminal UI and PR picker adapt to the terminal background and honour
+`NO_COLOR` and the terminal colour capability. Terminals without background
+query support can supply `COLORFGBG` (for example, `15;0` for dark or `0;15`
+for light). Quit or cancel restores the terminal screen.
+
 - `j` / `k`: move
 - `Enter`: open the selected record
 - `a`: toggle between open and all records

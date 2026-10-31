@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/wyrd-company/gitpr/internal/app"
@@ -36,7 +36,7 @@ func (m *Model) loadReviewCmd(id string) tea.Cmd {
 	}
 }
 
-func (m *Model) handleDiffKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleDiffKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
 		m.reviewRequest = nil
@@ -49,7 +49,7 @@ func (m *Model) handleDiffKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.diffOffset++
 	case "k", "up":
 		m.diffOffset--
-	case "pgdown", " ":
+	case "pgdown", "space":
 		m.diffOffset += m.diffPageSize()
 	case "pgup":
 		m.diffOffset -= m.diffPageSize()

@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/wyrd-company/gitpr/internal/model"
 )
 
 type pickerModel struct {
+	styles   *styles
 	title    string
 	prs      []model.PR2
 	cursor   int
@@ -30,7 +31,7 @@ func SelectPR(title string, prs []model.PR2) (string, error) {
 		cursor: 0,
 	}
 
-	program := tea.NewProgram(m, tea.WithAltScreen())
+	program := tea.NewProgram(m)
 	result, err := program.Run()
 	if err != nil {
 		return "", err
@@ -45,16 +46,19 @@ func SelectPR(title string, prs []model.PR2) (string, error) {
 }
 
 func (m pickerModel) Init() tea.Cmd {
-	return nil
+	return tea.RequestBackgroundColor
 }
 
 func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.BackgroundColorMsg:
+		m.styles = newStyles(msg.IsDark())
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		return m, nil
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c", "q", "esc":
 			m.canceled = true
@@ -78,9 +82,15 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m pickerModel) View() string {
+func (m pickerModel) View() tea.View {
+	v := tea.NewView(m.content())
+	v.AltScreen = true
+	return v
+}
+
+func (m pickerModel) content() string {
 	var lines []string
-	lines = append(lines, titleStyle.Render(m.title))
+	lines = append(lines, m.palette().titleStyle.Render(m.title))
 	lines = append(lines, "")
 
 	for i, pr := range m.prs {
@@ -91,13 +101,13 @@ func (m pickerModel) View() string {
 
 		line := fmt.Sprintf("%s %s  %-10s %-18s %s", cursor, shortID(pr.ID), pr.State, pr.SourceBranch, pr.Title)
 		if i == m.cursor {
-			line = cursorStyle.Render(line)
+			line = m.palette().cursorStyle.Render(line)
 		}
 		lines = append(lines, line)
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, mutedStyle.Render("Keys: j/k move  enter select  esc cancel"))
+	lines = append(lines, m.palette().mutedStyle.Render("Keys: j/k move  enter select  esc cancel"))
 
 	return strings.Join(lines, "\n")
 }

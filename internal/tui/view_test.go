@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/charmbracelet/x/ansi"
 
@@ -54,6 +54,6 @@ func TestDetailViewIsReadOnlyAndPointsActionsAtTheCLI(t *testing.T) {
 	}
 }
 
-func testKey(key string) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
+func testKey(key string) tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: []rune(key)[0], Text: key}
 }

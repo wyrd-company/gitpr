@@ -57,6 +57,31 @@ Type "gitpr tui" Enter
 Sleep 2s
 Enter
 Sleep 3s
+Type "d"
+Sleep 2s
+Type "j"
+Type "R"
+Sleep 2s
+Escape
+Sleep 500ms
+Type "q"
+Sleep 1s
+
+Type "gitpr show" Enter
+Sleep 2s
+Escape
+Sleep 1s
+Type "gitpr show" Enter
+Sleep 2s
+Enter
+Sleep 2s
+
+Type "COLORFGBG=0\;15 gitpr tui" Enter
+Sleep 2s
+Type "q"
+Sleep 1s
+Type "NO_COLOR=1 gitpr tui" Enter
+Sleep 2s
 Type "q"
 Sleep 1s
 

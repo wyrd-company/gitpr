@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/wyrd-company/gitpr/internal/app"
 	"github.com/wyrd-company/gitpr/internal/model"
@@ -30,7 +30,8 @@ type listLoadedMsg struct {
 }
 
 type Model struct {
-	svc *app.Service
+	styles *styles
+	svc    *app.Service
 
 	screen screen
 
@@ -53,20 +54,20 @@ type Model struct {
 func Run(svc *app.Service) error {
 	m := &Model{svc: svc, screen: listScreen}
 
-	program := tea.NewProgram(
-		m,
-		tea.WithAltScreen(),
-	)
+	program := tea.NewProgram(m)
 	_, err := program.Run()
 	return err
 }
 
 func (m *Model) Init() tea.Cmd {
-	return m.loadPRsCmd()
+	return tea.Batch(m.loadPRsCmd(), tea.RequestBackgroundColor)
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.BackgroundColorMsg:
+		m.styles = newStyles(msg.IsDark())
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -112,7 +113,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.infoMessage = ""
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if m.screen == listScreen {
 			return m.handleListKeys(msg)
 		}
@@ -125,7 +126,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) View() string {
+func (m *Model) View() tea.View {
+	v := tea.NewView(m.content())
+	v.AltScreen = true
+	return v
+}
+
+func (m *Model) content() string {
 	if m.width == 0 || m.height == 0 {
 		return "Loading..."
 	}
@@ -142,7 +149,7 @@ func (m *Model) View() string {
 	}
 }
 
-func (m *Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleListKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
 		m.reviewRequest = nil
@@ -167,7 +174,7 @@ func (m *Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) handleDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
 		m.reviewRequest = nil
@@ -192,10 +199,10 @@ func (m *Model) renderList() string {
 	if m.showAll {
 		title = "All PRs"
 	}
-	lines = append(lines, titleStyle.Render(title), "")
+	lines = append(lines, m.palette().titleStyle.Render(title), "")
 
 	if len(m.openRecords) == 0 {
-		lines = append(lines, mutedStyle.Render("No open PRs in refs/gitpr/index/open"))
+		lines = append(lines, m.palette().mutedStyle.Render("No open PRs in refs/gitpr/index/open"))
 	} else {
 		for i, pr := range m.openRecords {
 			cursor := " "
@@ -208,7 +215,7 @@ func (m *Model) renderList() string {
 			}
 			line := fmt.Sprintf("%s %s  %-20s %-18s %s", cursor, shortID(pr.ID), state, pr.SourceBranch, pr.Title)
 			if i == m.listCursor {
-				line = cursorStyle.Render(line)
+				line = m.palette().cursorStyle.Render(line)
 			}
 			lines = append(lines, line)
 		}
@@ -223,12 +230,12 @@ func (m *Model) renderList() string {
 			help += "  a all"
 		}
 	}
-	lines = append(lines, mutedStyle.Render(help))
+	lines = append(lines, m.palette().mutedStyle.Render(help))
 	if m.skipped > 0 {
-		lines = append(lines, mutedStyle.Render(app.SkippedRecordsMessage(m.skipped)))
+		lines = append(lines, m.palette().mutedStyle.Render(app.SkippedRecordsMessage(m.skipped)))
 	}
 	if m.errMessage != "" {
-		lines = append(lines, errorStyle.Render(m.errMessage))
+		lines = append(lines, m.palette().errorStyle.Render(m.errMessage))
 	}
 
 	return strings.Join(lines, "\n")
@@ -240,7 +247,7 @@ func (m *Model) renderDetail() string {
 		return ""
 	}
 	lines := []string{
-		titleStyle.Render(fmt.Sprintf("PR %s: %s", shortID(pr.ID), pr.Title)),
+		m.palette().titleStyle.Render(fmt.Sprintf("PR %s: %s", shortID(pr.ID), pr.Title)),
 		fmt.Sprintf("Source: %s  Base: %s  State: %s", pr.SourceBranch, pr.BaseBranch, pr.State),
 	}
 	if len(pr.Events) > 0 {
@@ -279,12 +286,12 @@ func (m *Model) renderDetail() string {
 			lines = append(lines, "Closure note: "+pr.Closure.Note)
 		}
 	}
-	lines = append(lines, "", mutedStyle.Render("Read-only PR view. Keys: d diff  c/r/m show CLI guidance  esc back  q quit"))
+	lines = append(lines, "", m.palette().mutedStyle.Render("Read-only PR view. Keys: d diff  c/r/m show CLI guidance  esc back  q quit"))
 	if m.infoMessage != "" {
-		lines = append(lines, infoStyle.Render(m.infoMessage))
+		lines = append(lines, m.palette().infoStyle.Render(m.infoMessage))
 	}
 	if m.errMessage != "" {
-		lines = append(lines, errorStyle.Render(m.errMessage))
+		lines = append(lines, m.palette().errorStyle.Render(m.errMessage))
 	}
 	return strings.Join(lines, "\n")
 }

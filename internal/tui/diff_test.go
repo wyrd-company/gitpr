@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/wyrd-company/gitpr/internal/app"
 	"github.com/wyrd-company/gitpr/internal/model"
@@ -115,11 +115,11 @@ func TestDiffNavigationRefreshAndReadOnlyActions(t *testing.T) {
 	if m.diffOffset != 0 {
 		t.Fatal("scrolled before start")
 	}
-	m.handleDiffKeys(tea.KeyMsg{Type: tea.KeyPgDown})
+	m.handleDiffKeys(tea.KeyPressMsg{Code: tea.KeyPgDown})
 	if m.diffOffset != m.diffPageSize() {
 		t.Fatal("page down")
 	}
-	m.handleDiffKeys(tea.KeyMsg{Type: tea.KeyPgUp})
+	m.handleDiffKeys(tea.KeyPressMsg{Code: tea.KeyPgUp})
 	if m.diffOffset != 0 {
 		t.Fatal("page up")
 	}
@@ -142,7 +142,7 @@ func TestDiffNavigationRefreshAndReadOnlyActions(t *testing.T) {
 	if m.review.Basis.SourceHeadSHA != "refreshed-source" || m.errMessage != "" {
 		t.Fatal("refresh failed")
 	}
-	m.handleDiffKeys(tea.KeyMsg{Type: tea.KeyEsc})
+	m.handleDiffKeys(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if m.screen != detailScreen || m.currentPR != &pr {
 		t.Fatal("escape lost detail")
 	}
@@ -158,7 +158,7 @@ func TestDiffViewportFitsAfterResize(t *testing.T) {
 	m := &Model{width: 100, height: 30, screen: diffScreen, review: &report, infoMessage: strings.Repeat("guidance ", 30), errMessage: "error\nsecond line"}
 	m.handleDiffKeys(testKey("G"))
 	m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
-	view := m.View()
+	view := m.View().Content
 	if len(strings.Split(view, "\n")) > m.height {
 		t.Fatalf("viewport exceeds height:\n%s", view)
 	}
@@ -206,7 +206,7 @@ func TestRefreshAfterEscapeDoesNotReopenDiff(t *testing.T) {
 			if failed {
 				response.err = errors.New("late refresh error")
 			}
-			m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+			m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 			if m.reviewRequest != nil {
 				t.Fatal("Escape retained pending request")
 			}
@@ -273,7 +273,7 @@ func TestReviewRequestInvalidatedAcrossViews(t *testing.T) {
 					m.Update(testKey("R"))
 					old.request = m.reviewRequest
 				}
-				m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+				m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 				if leave == "leave-record-reopen" {
 					m.Update(prLoadedMsg{record: pr})
 				}

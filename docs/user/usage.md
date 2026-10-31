@@ -136,6 +136,11 @@ screen; a failed refresh retains the last successfully loaded report and its
 basis. Only the latest requested report can update the view. Returning with
 `Esc` discards pending responses, so a late refresh does not reopen the diff.
 
+The terminal UI and PR picker adapt to the terminal background and honour
+`NO_COLOR` and the terminal colour capability. Terminals without background
+query support can supply `COLORFGBG` (for example, `15;0` for dark or `0;15`
+for light). Quit or cancel restores the terminal screen.
+
 ## Legacy records
 
 A record without a `schema` field is a legacy snapshot from the prior model.
