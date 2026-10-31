@@ -207,6 +207,22 @@ gitpr reopen <pr-id> <thread-id>
 gitpr comments <pr-id>
 ```
 
+Use `--text-file <path>` for multiline comments or text with backticks, `$()`,
+or mixed quotes. Use `--text-file -` to read standard input. Both preserve the
+body byte-for-byte, including leading and trailing whitespace. The path must
+be nonblank; the body must contain non-whitespace text. `--text-file` and
+`--text` are mutually exclusive. These inputs work for anchored comments,
+PR-level comments, and replies:
+
+```bash
+gitpr comment <pr-id> --pr-level --text-file comment.txt
+gitpr comment <pr-id> --thread <thread-id> --text-file - <<'COMMENT'
+Keep `value` and $(expression) literal.
+
+  Preserve this indentation.
+COMMENT
+```
+
 `--side` accepts `new` by default or `old`. Omit head flags to use live branch
 heads, or pass `--basis` or both head flags. PR-level threads refuse file, line,
 and side flags. Resolved threads accept replies. Comments are legal after merge

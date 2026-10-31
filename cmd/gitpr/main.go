@@ -493,11 +493,33 @@ func newCommentsCmd() *cobra.Command {
 	return cmd
 }
 
+// resolveCommentText mirrors description input while preserving comment bytes.
+func resolveCommentText(cmd *cobra.Command, text, textFile string) (string, error) {
+	if !cmd.Flags().Changed("text-file") {
+		return text, nil
+	}
+	if strings.TrimSpace(textFile) == "" {
+		return "", errors.New("--text-file requires a non-blank path (or - for standard input)")
+	}
+	if textFile == "-" {
+		data, err := io.ReadAll(cmd.InOrStdin())
+		if err != nil {
+			return "", fmt.Errorf("reading comment text from standard input: %w", err)
+		}
+		return string(data), nil
+	}
+	data, err := os.ReadFile(textFile)
+	if err != nil {
+		return "", fmt.Errorf("reading --text-file %q: %w", textFile, err)
+	}
+	return string(data), nil
+}
+
 func newCommentCmd() *cobra.Command {
 	var filePath string
 	var lineStart int
 	var lineEnd int
-	var text string
+	var text, textFile string
 	var prLevel bool
 	var threadID, side string
 	var headFlags expectedHeadFlags
@@ -508,6 +530,10 @@ func newCommentCmd() *cobra.Command {
 		Short:       "Add a comment to a PR thread",
 		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			body, err := resolveCommentText(cmd, text, textFile)
+			if err != nil {
+				return err
+			}
 			svc, err := app.NewService(".")
 			if err != nil {
 				return err
@@ -532,7 +558,7 @@ func newCommentCmd() *cobra.Command {
 			default:
 				return errors.New("--side must be old or new")
 			}
-			pr, _, err := svc.CommentPR2(cmd.Context(), args[0], app.ThreadCommentRequest{ThreadID: threadID, PRLevel: prLevel, File: filePath, Side: diffSide, LineStart: lineStart, LineEnd: lineEnd, Text: text, Heads: heads})
+			pr, _, err := svc.CommentPR2(cmd.Context(), args[0], app.ThreadCommentRequest{ThreadID: threadID, PRLevel: prLevel, File: filePath, Side: diffSide, LineStart: lineStart, LineEnd: lineEnd, Text: body, Heads: heads})
 			if err != nil {
 				return err
 			}
@@ -548,7 +574,9 @@ func newCommentCmd() *cobra.Command {
 	cmd.Flags().StringVar(&filePath, "file", "", "Changed file path for the comment")
 	cmd.Flags().IntVar(&lineStart, "line-start", 0, "Starting line number")
 	cmd.Flags().IntVar(&lineEnd, "line-end", 0, "Ending line number (defaults to line-start)")
-	cmd.Flags().StringVar(&text, "text", "", "Comment text")
+	cmd.Flags().StringVar(&text, "text", "", "Comment text (prefer --text-file for multiline or backtick content)")
+	cmd.Flags().StringVar(&textFile, "text-file", "", "Read comment text verbatim from a file, or - for standard input")
+	cmd.MarkFlagsMutuallyExclusive("text", "text-file")
 	cmd.Flags().BoolVar(&prLevel, "pr-level", false, "Create a PR-level thread")
 	cmd.Flags().StringVar(&threadID, "thread", "", "Reply in an existing thread")
 	cmd.Flags().StringVar(&side, "side", "new", "Anchored diff side: old|new")
