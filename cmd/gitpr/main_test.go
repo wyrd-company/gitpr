@@ -640,3 +640,40 @@ func TestIDCommandCoverageIgnoresUsagePlaceholders(t *testing.T) {
 		t.Fatalf("renaming placeholders changed PR-id coverage: before=%v after=%v", before, after)
 	}
 }
+
+func TestReviewSummaryCommandOmitsBodiesAndKeepsVerdictBasis(t *testing.T) {
+	dir := newCLITestRepo(t)
+	withinDir(t, dir, func() {
+		id := strings.Fields(executeCLI(t, "create", "--title", "Summary"))[2]
+		executeCLI(t, "comment", id, "--pr-level", "--text", "comment body")
+		output := executeCLI(t, "review", id, "--summary")
+		for _, want := range []string{"basis:", "source_head_sha:", "base_head_sha:", "base_contained: true", "verdict_hint: gitpr approve", "kind: pr-level", "status: open", "outdated: false"} {
+			if !strings.Contains(output, want) {
+				t.Fatalf("missing %q:\n%s", want, output)
+			}
+		}
+		for _, forbidden := range []string{"diff:", "patch:", "hunks:", "comment body", "comments:"} {
+			if strings.Contains(output, forbidden) {
+				t.Fatalf("unexpected %q:\n%s", forbidden, output)
+			}
+		}
+		source := cliGit(t, dir, "rev-parse", "refs/heads/feature")
+		base := cliGit(t, dir, "rev-parse", "refs/heads/main")
+		executeCLI(t, "approve", id, "--basis", source+":"+base)
+		output = executeCLI(t, "review", id, "--summary")
+		for _, want := range []string{"verdict: accepted", "interdiff_summary:", "unchanged: 1", "changed: 0", "previous_files: 1", "current_files: 1"} {
+			if !strings.Contains(output, want) {
+				t.Fatalf("missing %q:\n%s", want, output)
+			}
+		}
+		full := executeCLI(t, "review", id)
+		for _, want := range []string{"diff:", "patch:", "comment body"} {
+			if !strings.Contains(full, want) {
+				t.Fatalf("default output missing %q:\n%s", want, full)
+			}
+		}
+		if strings.Contains(full, "interdiff_summary:") {
+			t.Fatalf("default contains summary: %s", full)
+		}
+	})
+}

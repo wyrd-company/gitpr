@@ -339,6 +339,7 @@ func newShowCmd() *cobra.Command {
 }
 
 func newReviewCmd() *cobra.Command {
+	var summary bool
 	cmd := &cobra.Command{
 		Use:         "review <pr-id>",
 		Annotations: map[string]string{prIDCommandAnnotation: "true"},
@@ -349,7 +350,12 @@ func newReviewCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			report, err := svc.ReviewPR(cmd.Context(), args[0])
+			var report app.ReviewReport
+			if summary {
+				report, err = svc.ReviewPRSummary(cmd.Context(), args[0])
+			} else {
+				report, err = svc.ReviewPR(cmd.Context(), args[0])
+			}
 			if err != nil {
 				return err
 			}
@@ -361,6 +367,7 @@ func newReviewCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&summary, "summary", false, "Print review state and interdiff counts without patches or comment bodies")
 	return cmd
 }
 

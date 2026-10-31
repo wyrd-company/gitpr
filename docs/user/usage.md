@@ -19,6 +19,17 @@ gitpr approve <pr-id> --basis <source-head>:<base-head>
 gitpr merge <pr-id>
 ```
 
+For a compact state check, use:
+
+```bash
+gitpr review <pr-id> --summary
+```
+
+This keeps the live heads, containment, latest verdict, and projected thread
+state. It omits patch and comment bodies. With a prior verdict, it reports
+fixed interdiff file counts from blob IDs and modes. Each compared diff
+represents renames as deletions and additions. Use the default review command to inspect code changes.
+
 ## Base selection
 
 `gitpr create --base <branch>` selects the base explicitly. Without `--base`,
