@@ -76,7 +76,7 @@ Build from source locally:
 
 ```bash
 task build
-gitpr --version
+./bin/gitpr --version
 ```
 
 Install with Go:
@@ -337,5 +337,6 @@ Run `task uat:setup` to prepare the manual acceptance flow.
 
 ```bash
 task build
+./bin/gitpr --version
 task check
 ```

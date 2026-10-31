@@ -3,7 +3,7 @@
 version: "3"
 
 vars:
-  BIN_DIR: ~/.local/bin
+  BIN_DIR: ./bin
   BIN_PATH: "{{.BIN_DIR}}/gitpr"
   UAT_DIR: .tmp/uat
   UAT_REPO: "{{.UAT_DIR}}/repo"
@@ -17,10 +17,10 @@ tasks:
     silent: true
 
   build:
-    desc: Build the gitpr CLI into ~/.local/bin/gitpr
+    desc: Build the gitpr CLI into ./bin/gitpr
     cmds:
-      - mkdir -p {{.BIN_DIR}}
-      - VERSION="$(tagver)"; go build -ldflags "-X main.version=$VERSION" -o {{.BIN_PATH}} ./cmd/gitpr
+      - mkdir -p "{{.BIN_DIR}}"
+      - VERSION="$(tagver)"; go build -ldflags "-X main.version=$VERSION" -o "{{.BIN_PATH}}" ./cmd/gitpr
 
   version:
     desc: Print the calculated release version
@@ -106,7 +106,7 @@ tasks:
       - |
         printf "Repo:      %s\n" "$PWD/{{.UAT_REPO}}"
         printf "Worktree:  %s\n" "$PWD/{{.UAT_FEATURE}}"
-        printf "Binary:    %s\n" "$HOME/.local/bin/gitpr"
+        printf "Binary:    %s\n" "$PWD/{{.BIN_PATH}}"
 
   uat:setup:
     desc: Create a disposable UAT repo and feature worktree under .tmp/uat
@@ -173,12 +173,12 @@ tasks:
         printf "\nUAT environment ready.\n\n"
         printf "Repo:      %s\n" "$PWD/{{.UAT_REPO}}"
         printf "Worktree:  %s\n" "$PWD/{{.UAT_FEATURE}}"
-        printf "Binary:    %s\n\n" "$HOME/.local/bin/gitpr"
+        printf "Binary:    %s\n\n" "$PWD/{{.BIN_PATH}}"
         printf "Suggested next steps:\n"
         printf "  cd %s\n" "$PWD/{{.UAT_FEATURE}}"
-        printf "  gitpr create --title \"Feature PR\" --description \"UAT run\"\n"
+        printf "  \"%s\" create --title \"Feature PR\" --description \"UAT run\"\n" "$PWD/{{.BIN_PATH}}"
         printf "  cd %s\n" "$PWD/{{.UAT_REPO}}"
-        printf "  gitpr list --status open\n"
+        printf "  \"%s\" list --status open\n" "$PWD/{{.BIN_PATH}}"
 
   uat:reset:
     desc: Recreate the disposable UAT repo and worktree from scratch
