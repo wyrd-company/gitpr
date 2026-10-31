@@ -70,22 +70,24 @@ Clone the repo and build:
 git clone https://github.com/wyrd-company/gitpr.git
 cd gitpr
 task build
+./bin/gitpr --version
 ```
 
-`task build` compiles `./cmd/gitpr` and installs it to `~/.local/bin/gitpr`,
-embedding the `tagver`-calculated version. Ensure `~/.local/bin` is on your
-`PATH`.
+`task build` compiles `./cmd/gitpr` into the gitignored `./bin` directory,
+embedding the `tagver`-calculated version. Run `./bin/gitpr` from the repo
+directory to use this build.
 
 To build without Task, run `go build` directly — note the version will report
 `dev` unless you stamp it yourself:
 
 ```bash
-go build -o gitpr ./cmd/gitpr
+go build -o ./bin/gitpr ./cmd/gitpr
+./bin/gitpr --version
 ```
 
 ## Verify
 
-Confirm the binary is installed and on your `PATH`:
+For an installed binary on your `PATH`:
 
 ```bash
 gitpr --version
