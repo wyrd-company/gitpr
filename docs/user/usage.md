@@ -19,6 +19,27 @@ gitpr approve <pr-id> --basis <source-head>:<base-head>
 gitpr merge <pr-id>
 ```
 
+## Base selection
+
+`gitpr create --base <branch>` selects the base explicitly. Without `--base`,
+create uses the saved repository default, then `refs/remotes/origin/HEAD`, then
+local `main` or `master`. Remote branch names retain their full path, such as
+`epic/current`. Create does not infer the branch from which a worktree branched.
+
+A detected base must be a local branch. If the saved default was deleted, or
+origin’s default has no corresponding local branch, create fails with the
+detected name and `--base` guidance before writing configuration or a PR record.
+It does not silently select another base. Retry with an existing base:
+
+```bash
+gitpr create --base main --title "Improve validation"
+```
+
+A successful create saves the selected base as the repository default. For epic
+child branches, pass the intended epic branch with `--base`.
+
+## Descriptions
+
 `--description` passes its value through the invoking shell, so backticks,
 `$()`, and mixed quoting in a multiline body can be consumed or mangled by the
 shell before gitpr sees them. Use `--description-file <path>` (or `-` for

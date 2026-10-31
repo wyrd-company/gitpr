@@ -24,6 +24,14 @@ order: 4
 | `gitpr tui`                      | List records. The detail view is read-only; actions use the CLI.                                                                                                                                                                    |
 | `gitpr debug export <id>`        | Export the record metadata ref tree to `--to <directory>`.                                                                                                                                                                                         |
 
+## Create base selection
+
+`--base` overrides the saved repository default. Without it, detection uses the
+saved default, origin’s default branch (full name), then local `main` or
+`master`. A missing detected local branch refuses creation before any write;
+the error names the branch and directs a retry with `--base <branch>`.
+Successful creation saves the selected base as the repository default.
+
 ## List filters
 
 `--state` accepts `open`, `merged`, and `closed`; any other value is refused.

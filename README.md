@@ -125,6 +125,12 @@ gitpr create --worktree /path/to/worktree --base main --title "Improve validatio
 gitpr review <pr-id>
 ```
 
+Without `--base`, create uses the saved repository default, then origin’s default
+branch, then local `main` or `master`. The detected base must exist locally.
+If it is missing, create reports its name and writes no record; retry with
+`--base <branch>`. A successful create saves the selected base as the default.
+For an epic child branch, pass the intended epic branch explicitly.
+
 ### Shell-safe descriptions
 
 `--description` passes its value through the invoking shell. Backticks,

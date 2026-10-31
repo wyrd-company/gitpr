@@ -132,7 +132,7 @@ func (r *Repo) DetectDefaultBranch(ctx context.Context, configured string) (stri
 				return "", err
 			}
 			ref := strings.TrimSpace(out)
-			return filepath.Base(ref), nil
+			return strings.TrimPrefix(ref, "refs/remotes/origin/"), nil
 		},
 		func() (string, error) {
 			if ok, _ := r.BranchExists(ctx, "main"); ok {
