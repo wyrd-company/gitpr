@@ -27,7 +27,7 @@ type ThreadCommentRequest struct {
 
 func (s *Service) CommentPR2(ctx context.Context, id string, req ThreadCommentRequest) (model.PR2, string, error) {
 	if strings.TrimSpace(req.Text) == "" {
-		return model.PR2{}, "", errors.New("--text is required")
+		return model.PR2{}, "", errors.New("non-blank comment text is required (--text or --text-file)")
 	}
 	if req.ThreadID == "" {
 		if req.PRLevel {
@@ -78,7 +78,7 @@ func (s *Service) CommentPR2(ctx context.Context, id string, req ThreadCommentRe
 			return model.PR2{}, "", err
 		}
 		now := time.Now().UTC()
-		comment := model.ThreadComment{Body: strings.TrimSpace(req.Text), Timestamp: now, SourceHeadSHA: heads.Source, BaseHeadSHA: heads.Base, PostClosure: pr.State != model.PRStateOpen}
+		comment := model.ThreadComment{Body: req.Text, Timestamp: now, SourceHeadSHA: heads.Source, BaseHeadSHA: heads.Base, PostClosure: pr.State != model.PRStateOpen}
 		if req.ThreadID == "" {
 			thread := model.Thread{ID: ulid.Make().String(), Status: model.ThreadOpen, Comments: []model.ThreadComment{comment}}
 			if req.PRLevel {

@@ -72,6 +72,22 @@ Records remain retained after merge or closure. `gitpr delete <id>` previews the
 destructive operation; `--force` performs it and may make pinned commits
 collectable.
 
+Use `--text-file <path>` for multiline comments or text with backticks, `$()`,
+or mixed quotes. Use `--text-file -` to read standard input. Both preserve the
+body byte-for-byte, including leading and trailing whitespace. The path must
+be nonblank; the body must contain non-whitespace text. `--text-file` and
+`--text` are mutually exclusive. These inputs work for anchored comments,
+PR-level comments, and replies:
+
+```bash
+gitpr comment <pr-id> --pr-level --text-file comment.txt
+gitpr comment <pr-id> --thread <thread-id> --text-file - <<'COMMENT'
+Keep `value` and $(expression) literal.
+
+  Preserve this indentation.
+COMMENT
+```
+
 The CLI accepts a full ULID or a unique prefix. `show` and `comments` open a
 picker without an ID. The TUI lists records and provides a read-only detail
 view; actions use the CLI review and basis flow.
