@@ -87,6 +87,13 @@ type Thread struct {
 	Comments []ThreadComment `yaml:"comments,omitempty"`
 }
 
+// TagBase preserves both the tag object and its peeled commit.
+type TagBase struct {
+	Ref       string `yaml:"ref"`
+	ObjectSHA string `yaml:"object_sha"`
+	CommitSHA string `yaml:"commit_sha"`
+}
+
 type PR2 struct {
 	Schema             int           `yaml:"schema"`
 	ID                 string        `yaml:"id"`
@@ -94,6 +101,7 @@ type PR2 struct {
 	SourceBranch       string        `yaml:"source_branch"`
 	SourceWorktreePath string        `yaml:"source_worktree_path"`
 	BaseBranch         string        `yaml:"base_branch"`
+	BaseTag            *TagBase      `yaml:"base_tag,omitempty"`
 	RepositoryRoot     string        `yaml:"repository_root"`
 	Description        string        `yaml:"description"`
 	State              PRState       `yaml:"state"`

@@ -50,6 +50,7 @@ type ReviewReport struct {
 	InterdiffSummary *InterdiffSummary  `yaml:"interdiff_summary,omitempty"`
 	VerdictHint      string             `yaml:"verdict_hint,omitempty"`
 	Threads          []model.Thread     `yaml:"threads,omitempty"`
+	BaseTag          *model.TagBase     `yaml:"base_tag,omitempty"`
 }
 
 func (s *Service) ReviewPR(ctx context.Context, id string) (ReviewReport, error) {
@@ -70,24 +71,31 @@ func (s *Service) reviewPR(ctx context.Context, id string, summary bool) (Review
 	if err != nil {
 		return ReviewReport{}, err
 	}
-	report := ReviewReport{ID: pr.ID, SourceBranch: pr.SourceBranch, BaseBranch: pr.BaseBranch}
+	report := ReviewReport{ID: pr.ID, SourceBranch: pr.SourceBranch, BaseBranch: pr.BaseBranch, BaseTag: pr.BaseTag}
 	if len(pr.Events) > 0 {
 		latest := pr.Events[len(pr.Events)-1]
 		report.LatestEvent = &latest
 	}
-	baseRef := "refs/heads/" + pr.BaseBranch
-	baseExists, err := repo.BranchExists(ctx, pr.BaseBranch)
-	if err != nil {
-		return ReviewReport{}, err
+	if pr.BaseTag != nil {
+		if err := validateTagBase(ctx, repo, pr); err != nil {
+			return ReviewReport{}, err
+		}
+		report.Basis.BaseHeadSHA = pr.BaseTag.CommitSHA
+	} else {
+		baseExists, err := repo.BranchExists(ctx, pr.BaseBranch)
+		if err != nil {
+			return ReviewReport{}, err
+		}
+		if !baseExists {
+			report.Basis.BaseBranchMissing = true
+			return report, nil
+		}
+		report.Basis.BaseHeadSHA, err = repo.HeadSHA(ctx, "refs/heads/"+pr.BaseBranch)
+		if err != nil {
+			return ReviewReport{}, err
+		}
 	}
-	if !baseExists {
-		report.Basis.BaseBranchMissing = true
-		return report, nil
-	}
-	report.Basis.BaseHeadSHA, err = repo.HeadSHA(ctx, baseRef)
-	if err != nil {
-		return ReviewReport{}, fmt.Errorf("resolve base branch %q: %w", pr.BaseBranch, err)
-	}
+
 	sourceRef := "refs/heads/" + pr.SourceBranch
 	exists, err := repo.BranchExists(ctx, pr.SourceBranch)
 	if err != nil {

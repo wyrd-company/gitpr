@@ -109,7 +109,7 @@ func newCreateCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&description, "description", "d", "", "PR description (shell-quoting fragile for multiline/backtick content; prefer --description-file)")
 	cmd.Flags().StringVar(&descriptionFile, "description-file", "", "Read the PR description verbatim from a file, or - for standard input")
 	cmd.Flags().StringVar(&worktree, "worktree", "", "Source worktree path (defaults to current directory)")
-	cmd.Flags().StringVar(&base, "base", "", "Override detected default branch")
+	cmd.Flags().StringVar(&base, "base", "", "Base branch or immutable tag (use refs/tags/<name> to select a tag explicitly)")
 	_ = cmd.MarkFlagRequired("title")
 	cmd.MarkFlagsMutuallyExclusive("description", "description-file")
 

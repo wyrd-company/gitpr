@@ -45,7 +45,11 @@ func (s *Service) CreatePR(ctx context.Context, req CreatePRRequest) (model.PR2,
 		return model.PR2{}, "", err
 	}
 
-	if branch == baseBranch {
+	baseBranch, tag, err := resolveBase(ctx, repo, baseBranch)
+	if err != nil {
+		return model.PR2{}, "", err
+	}
+	if tag == nil && branch == baseBranch {
 		return model.PR2{}, "", fmt.Errorf("source branch %q matches base branch %q", branch, baseBranch)
 	}
 
@@ -68,13 +72,14 @@ func (s *Service) CreatePR(ctx context.Context, req CreatePRRequest) (model.PR2,
 		SourceWorktreePath: repo.WorktreePath,
 		RepositoryRoot:     repo.CommonRoot,
 		BaseBranch:         baseBranch,
+		BaseTag:            tag,
 		Description:        req.Description,
 		State:              model.PRStateOpen,
 		CreatedAt:          now,
 		UpdatedAt:          now,
 	}
 
-	if cfg.DefaultBranch != baseBranch {
+	if tag == nil && cfg.DefaultBranch != baseBranch {
 		cfg.DefaultBranch = baseBranch
 		if err := s.store.SaveConfig(cfg); err != nil {
 			return model.PR2{}, "", err

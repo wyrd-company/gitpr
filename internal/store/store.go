@@ -100,6 +100,9 @@ func (s *Store) SavePR2(pr model.PR2, previousState model.PRState, expectedMeta 
 }
 
 func (s *Store) MergePR2(pr model.PR2, expectedMeta string) (string, error) {
+	if pr.BaseTag != nil {
+		return "", errors.New("cannot merge into an immutable tag; close with integrated evidence")
+	}
 	if pr.State != model.PRStateMerged || len(pr.Events) == 0 {
 		return "", errors.New("merged schema-2 PR requires a review event")
 	}
@@ -136,6 +139,9 @@ func (s *Store) savePR2(pr model.PR2, previousState model.PRState, expectedMeta 
 		}
 	}
 	if previous != nil {
+		if !reflect.DeepEqual(previous.BaseTag, pr.BaseTag) {
+			return "", errors.New("base tag identity is immutable")
+		}
 		if isTerminalState(previous.State) && pr.State != previous.State {
 			return "", fmt.Errorf("%w: PR %s is %s and cannot become %s", ErrTerminalStateTransition, pr.ID, previous.State, pr.State)
 		}
@@ -177,6 +183,17 @@ func (s *Store) savePR2(pr model.PR2, previousState model.PRState, expectedMeta 
 	currentIndexRef := s.indexRef2(pr.State, pr.ID)
 	oldCurrentIndex, _ := s.resolveRef(currentIndexRef)
 	updates := make([]refUpdate, 0, 8)
+	if pr.BaseTag != nil {
+		tag := pr.BaseTag
+		if !strings.HasPrefix(tag.Ref, "refs/tags/") || strings.ContainsAny(tag.Ref, " \t\r\n") || !isFullObjectID(tag.ObjectSHA) || !isFullObjectID(tag.CommitSHA) || pr.BaseBranch != tag.Ref {
+			return "", errors.New("invalid immutable tag identity")
+		}
+		// Check the tag in the same ref transaction as creation or a verdict append.
+		// Metadata-only edits and closure remain possible after tag loss.
+		if previous == nil || len(pr.Events) > len(previous.Events) {
+			updates = append(updates, refUpdate{Action: "verify", Ref: tag.Ref, OldOID: tag.ObjectSHA})
+		}
+	}
 	if baseUpdate != nil {
 		updates = append(updates, *baseUpdate)
 	}
@@ -209,6 +226,11 @@ func (s *Store) savePR2(pr model.PR2, previousState model.PRState, expectedMeta 
 		return "", err
 	}
 	existing = append(existing, anchors...)
+	tags, err := s.listRefs(prRefPrefix + "/" + pr.ID + "/tag")
+	if err != nil {
+		return "", err
+	}
+	existing = append(existing, tags...)
 	for _, ref := range existing {
 		desired, keep := pins[ref.Name]
 		if !keep {
@@ -359,6 +381,10 @@ func sameReviewEvent(left, right model.ReviewEvent) bool {
 
 func (s *Store) desiredPR2Pins(pr model.PR2) map[string]string {
 	pins := make(map[string]string)
+	if pr.BaseTag != nil {
+		pins[prRefPrefix+"/"+pr.ID+"/tag/object"] = pr.BaseTag.ObjectSHA
+		pins[prRefPrefix+"/"+pr.ID+"/tag/commit"] = pr.BaseTag.CommitSHA
+	}
 	pairs := make(map[string]struct{}, len(pr.Events))
 	for _, event := range pr.Events {
 		prefix := fmt.Sprintf("%s/%s/events/%s", prRefPrefix, pr.ID, event.ID)
@@ -791,6 +817,8 @@ func (s *Store) batchUpdateRefs(updates []refUpdate) error {
 		switch update.Action {
 		case "update":
 			script.WriteString(fmt.Sprintf("update %s %s %s\n", update.Ref, update.NewOID, oidOrZero(update.OldOID)))
+		case "verify":
+			script.WriteString(fmt.Sprintf("verify %s %s\n", update.Ref, update.OldOID))
 		case "delete":
 			script.WriteString(fmt.Sprintf("delete %s %s\n", update.Ref, oidOrZero(update.OldOID)))
 		default:

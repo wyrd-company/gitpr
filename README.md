@@ -113,7 +113,8 @@ task uat:reset
 
 ## Review model
 
-A pull request tracks a source branch and a base branch. Each approve or reject
+A pull request tracks a source branch against a branch or immutable tag base.
+Each approve or reject
 operation appends an immutable review event for one exact source/base head pair;
 no diff is stored in the record.
 
@@ -370,3 +371,25 @@ task build
 ./bin/gitpr --version
 task check
 ```
+
+## Immutable tag bases
+
+Create a review against a lightweight or annotated tag with
+`gitpr create --title "Release review" --base refs/tags/1.2.3`.
+An unqualified base name selects a branch first, then a tag. A tag base does
+not change the saved default branch. The source must remain a branch.
+
+The record preserves the full tag ref, its object ID, and its peeled commit
+in `base_tag`. Review displays this identity and uses the peeled commit as
+`base_head_sha`. Both approve and reject refuse tag deletion or movement,
+including a changed annotation that still peels to the same commit. The tag
+is verified atomically with each verdict write. A changed tag needs a new PR;
+existing records retain their original identity and pinned objects.
+
+`merge` refuses tag bases before mutation, including with `--cleanup`.
+After integration or verification by other means, use
+`gitpr close <id> --reason integrated --destination <branch> --commit <sha>`.
+This records the destination and resulting commit without changing any tag,
+branch, or worktree. Abandoned and superseded closure also remain available,
+even after tag loss. Metadata edits and explicit-basis comments remain available.
+Branch approval, rejection, and fast-forward merge keep their existing behavior.
