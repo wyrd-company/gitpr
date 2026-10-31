@@ -18,6 +18,7 @@ type screen int
 const (
 	listScreen screen = iota
 	detailScreen
+	diffScreen
 )
 
 type prLoadedMsg struct {
@@ -39,14 +40,17 @@ type Model struct {
 	width  int
 	height int
 
-	openRecords []model.PR2
-	allRecords  []model.PR2
-	skipped     int
-	showAll     bool
-	listCursor  int
-	currentPR   *model.PR2
-	infoMessage string
-	errMessage  string
+	openRecords   []model.PR2
+	allRecords    []model.PR2
+	skipped       int
+	showAll       bool
+	listCursor    int
+	currentPR     *model.PR2
+	infoMessage   string
+	errMessage    string
+	review        *app.ReviewReport
+	diffOffset    int
+	reviewRequest *reviewRequest
 }
 
 func Run(svc *app.Service) error {
@@ -111,11 +115,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errMessage = msg.err.Error()
 			return m, nil
 		}
+		m.reviewRequest = nil
 		record := msg.record
 		m.currentPR = &record
 		m.screen = detailScreen
 		m.infoMessage = ""
 		m.errMessage = ""
+		return m, nil
+
+	case reviewLoadedMsg:
+		if msg.request == nil || msg.request != m.reviewRequest || m.currentPR == nil || m.currentPR.ID != msg.id || m.screen != msg.request.screen {
+			return m, nil
+		}
+		m.reviewRequest = nil
+		if msg.err != nil {
+			m.errMessage = msg.err.Error()
+			return m, nil
+		}
+		m.review = &msg.report
+		m.diffOffset = 0
+		m.screen = diffScreen
+		m.errMessage, m.infoMessage = "", ""
 		return m, nil
 
 	case listLoadedMsg:
@@ -134,6 +154,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.screen == listScreen {
 			return m.handleListKeys(msg)
 		}
+		if m.screen == diffScreen {
+			return m.handleDiffKeys(msg)
+		}
 		return m.handleDetailKeys(msg)
 	}
 
@@ -150,6 +173,8 @@ func (m *Model) View() string {
 		return m.renderList()
 	case detailScreen:
 		return m.renderDetail()
+	case diffScreen:
+		return m.renderDiff()
 	default:
 		return ""
 	}
@@ -158,6 +183,7 @@ func (m *Model) View() string {
 func (m *Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
+		m.reviewRequest = nil
 		return m, tea.Quit
 	case "up", "k":
 		if m.listCursor > 0 {
@@ -182,10 +208,16 @@ func (m *Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) handleDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
+		m.reviewRequest = nil
 		return m, tea.Quit
 	case "esc":
+		m.reviewRequest = nil
 		m.screen, m.currentPR, m.errMessage = listScreen, nil, ""
 		return m, m.loadPRsCmd()
+	case "d":
+		if m.currentPR != nil {
+			return m, m.loadReviewCmd(m.currentPR.ID)
+		}
 	case "c", "r", "m":
 		m.infoMessage = "PR actions use the CLI: gitpr review <id>, approve/reject with its basis, gitpr merge <id>, or gitpr comment <id>."
 	}
@@ -291,7 +323,7 @@ func (m *Model) renderDetail() string {
 			lines = append(lines, "Closure note: "+pr.Closure.Note)
 		}
 	}
-	lines = append(lines, "", mutedStyle.Render("Read-only PR view. Keys: c/r/m show CLI guidance  esc back  q quit"))
+	lines = append(lines, "", mutedStyle.Render("Read-only PR view. Keys: d diff  c/r/m show CLI guidance  esc back  q quit"))
 	if m.infoMessage != "" {
 		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Render(m.infoMessage))
 	}
