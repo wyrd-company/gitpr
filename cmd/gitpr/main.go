@@ -19,6 +19,11 @@ import (
 
 var version = "dev"
 
+// prIDCommandAnnotation marks commands that accept a PR id, independently of
+// their help text. The legacy-record coverage test walks this metadata and
+// requires a matching invocation for every marked command.
+const prIDCommandAnnotation = "gitpr.pr-id"
+
 func main() {
 	rootCmd := newRootCmd()
 	rootCmd.SetOut(os.Stdout)
@@ -146,9 +151,10 @@ func newEditCmd() *cobra.Command {
 	var descriptionFile string
 
 	cmd := &cobra.Command{
-		Use:   "edit <pr-id>",
-		Short: "Replace title and/or description on an open branch-based PR",
-		Args:  cobra.ExactArgs(1),
+		Use:         "edit <pr-id>",
+		Annotations: map[string]string{prIDCommandAnnotation: "true"},
+		Short:       "Replace title and/or description on an open branch-based PR",
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !cmd.Flags().Changed("title") && !cmd.Flags().Changed("description") && !cmd.Flags().Changed("description-file") {
 				return errors.New("edit requires --title, --description, or --description-file")
@@ -261,9 +267,10 @@ func newShowCmd() *cobra.Command {
 	var status string
 
 	cmd := &cobra.Command{
-		Use:   "show [pr-id]",
-		Short: "Show a PR file as YAML",
-		Args:  cobra.MaximumNArgs(1),
+		Use:         "show [pr-id]",
+		Annotations: map[string]string{prIDCommandAnnotation: "true"},
+		Short:       "Show a PR file as YAML",
+		Args:        cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			svc, err := app.NewService(".")
 			if err != nil {
@@ -333,9 +340,10 @@ func newShowCmd() *cobra.Command {
 
 func newReviewCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "review <pr-id>",
-		Short: "Compute the live review basis for a branch-based PR",
-		Args:  cobra.ExactArgs(1),
+		Use:         "review <pr-id>",
+		Annotations: map[string]string{prIDCommandAnnotation: "true"},
+		Short:       "Compute the live review basis for a branch-based PR",
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			svc, err := app.NewService(".")
 			if err != nil {
@@ -396,9 +404,10 @@ func (f expectedHeadFlags) parse() (*app.ExpectedHeads, error) {
 func newApproveCmd() *cobra.Command {
 	var flags expectedHeadFlags
 	cmd := &cobra.Command{
-		Use:   "approve <pr-id>",
-		Short: "Record an accepted review event for a branch-based PR",
-		Args:  cobra.ExactArgs(1),
+		Use:         "approve <pr-id>",
+		Annotations: map[string]string{prIDCommandAnnotation: "true"},
+		Short:       "Record an accepted review event for a branch-based PR",
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			heads, err := flags.parse()
 			if err != nil {
@@ -427,9 +436,10 @@ func newCommentsCmd() *cobra.Command {
 	var status string
 
 	cmd := &cobra.Command{
-		Use:   "comments [pr-id]",
-		Short: "Show only comments from a PR",
-		Args:  cobra.MaximumNArgs(1),
+		Use:         "comments [pr-id]",
+		Annotations: map[string]string{prIDCommandAnnotation: "true"},
+		Short:       "Show only comments from a PR",
+		Args:        cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			svc, err := app.NewService(".")
 			if err != nil {
@@ -493,9 +503,10 @@ func newCommentCmd() *cobra.Command {
 	var headFlags expectedHeadFlags
 
 	cmd := &cobra.Command{
-		Use:   "comment <pr-id>",
-		Short: "Add a comment to a PR thread",
-		Args:  cobra.ExactArgs(1),
+		Use:         "comment <pr-id>",
+		Annotations: map[string]string{prIDCommandAnnotation: "true"},
+		Short:       "Add a comment to a PR thread",
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			svc, err := app.NewService(".")
 			if err != nil {
@@ -547,7 +558,7 @@ func newCommentCmd() *cobra.Command {
 }
 
 func newThreadStatusCmd(verb string, status model.ThreadStatus) *cobra.Command {
-	return &cobra.Command{Use: verb + " <pr-id> <thread-id>", Short: strings.ToUpper(verb[:1]) + verb[1:] + " a PR comment thread", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+	return &cobra.Command{Annotations: map[string]string{prIDCommandAnnotation: "true"}, Use: verb + " <pr-id> <thread-id>", Short: strings.ToUpper(verb[:1]) + verb[1:] + " a PR comment thread", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		svc, err := app.NewService(".")
 		if err != nil {
 			return err
@@ -565,10 +576,11 @@ func newThreadStatusCmd(verb string, status model.ThreadStatus) *cobra.Command {
 func newRejectCmd() *cobra.Command {
 	var flags expectedHeadFlags
 	cmd := &cobra.Command{
-		Use:     "reject <pr-id>",
-		Aliases: []string{"request-changes"},
-		Short:   "Record a rejected review event",
-		Args:    cobra.ExactArgs(1),
+		Use:         "reject <pr-id>",
+		Annotations: map[string]string{prIDCommandAnnotation: "true"},
+		Aliases:     []string{"request-changes"},
+		Short:       "Record a rejected review event",
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			svc, err := app.NewService(".")
 			if err != nil {
@@ -597,9 +609,10 @@ func newMergeCmd() *cobra.Command {
 	var cleanup bool
 
 	cmd := &cobra.Command{
-		Use:   "merge <pr-id>",
-		Short: "Merge an eligible PR into its base branch",
-		Args:  cobra.ExactArgs(1),
+		Use:         "merge <pr-id>",
+		Annotations: map[string]string{prIDCommandAnnotation: "true"},
+		Short:       "Merge an eligible PR into its base branch",
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			svc, err := app.NewService(".")
 			if err != nil {
@@ -636,7 +649,7 @@ func printMergeSuccess(cmd *cobra.Command, pr model.PR2, ref string, cleanup boo
 func newCloseCmd() *cobra.Command {
 	var reason, destination, supersededBy, note string
 	var commits, patchIDs []string
-	cmd := &cobra.Command{Use: "close <pr-id>", Short: "Close an open PR", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Annotations: map[string]string{prIDCommandAnnotation: "true"}, Use: "close <pr-id>", Short: "Close an open PR", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		svc, err := app.NewService(".")
 		if err != nil {
 			return err
@@ -660,7 +673,7 @@ func newCloseCmd() *cobra.Command {
 
 func newDeleteCmd() *cobra.Command {
 	var force bool
-	cmd := &cobra.Command{Use: "delete <pr-id>", Short: "Delete a PR record and all retained refs", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Annotations: map[string]string{prIDCommandAnnotation: "true"}, Use: "delete <pr-id>", Short: "Delete a PR record and all retained refs", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		svc, err := app.NewService(".")
 		if err != nil {
 			return err
@@ -693,9 +706,10 @@ func newDebugCmd() *cobra.Command {
 	}
 
 	exportCmd := &cobra.Command{
-		Use:   "export <pr-id>",
-		Short: "Export a PR metadata ref tree to a local directory",
-		Args:  cobra.ExactArgs(1),
+		Use:         "export <pr-id>",
+		Annotations: map[string]string{prIDCommandAnnotation: "true"},
+		Short:       "Export a PR metadata ref tree to a local directory",
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if strings.TrimSpace(targetDir) == "" {
 				return errors.New("--to is required")

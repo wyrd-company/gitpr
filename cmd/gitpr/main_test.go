@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -567,18 +568,7 @@ func TestEveryRegisteredIDCommandRefusesALegacyRecord(t *testing.T) {
 		before := cliGit(t, dir, "show", "refs/gitpr/pr/"+legacyID+"/meta:pr.yaml")
 		invocations := idCommandInvocations(t, legacyID)
 
-		registered := map[string]struct{}{}
-		var walk func(cmd *cobra.Command, prefix string)
-		walk = func(cmd *cobra.Command, prefix string) {
-			for _, child := range cmd.Commands() {
-				name := strings.TrimSpace(prefix + " " + child.Name())
-				if strings.Contains(child.Use, "pr-id") {
-					registered[name] = struct{}{}
-				}
-				walk(child, name)
-			}
-		}
-		walk(newRootCmd(), "")
+		registered := registeredIDCommands(newRootCmd())
 
 		for name := range registered {
 			if _, covered := invocations[name]; !covered {
@@ -612,4 +602,41 @@ func TestEveryRegisteredIDCommandRefusesALegacyRecord(t *testing.T) {
 			t.Fatalf("a refused command changed the legacy record\n before: %s\n after: %s", before, after)
 		}
 	})
+}
+
+// registeredIDCommands reads only explicit metadata on the real command tree.
+// Optional ids, nested commands, and shared constructors use the same marker.
+func registeredIDCommands(root *cobra.Command) map[string]struct{} {
+	registered := map[string]struct{}{}
+	var walk func(cmd *cobra.Command, prefix string)
+	walk = func(cmd *cobra.Command, prefix string) {
+		for _, child := range cmd.Commands() {
+			name := strings.TrimSpace(prefix + " " + child.Name())
+			if child.Annotations[prIDCommandAnnotation] == "true" {
+				registered[name] = struct{}{}
+			}
+			walk(child, name)
+		}
+	}
+	walk(root, "")
+	return registered
+}
+
+func TestIDCommandCoverageIgnoresUsagePlaceholders(t *testing.T) {
+	root := newRootCmd()
+	before := registeredIDCommands(root)
+	if len(before) == 0 {
+		t.Fatal("no PR-id commands registered")
+	}
+	var rename func(*cobra.Command)
+	rename = func(cmd *cobra.Command) {
+		cmd.Use = strings.ReplaceAll(cmd.Use, "pr-id", "id")
+		for _, child := range cmd.Commands() {
+			rename(child)
+		}
+	}
+	rename(root)
+	if after := registeredIDCommands(root); !reflect.DeepEqual(after, before) {
+		t.Fatalf("renaming placeholders changed PR-id coverage: before=%v after=%v", before, after)
+	}
 }
