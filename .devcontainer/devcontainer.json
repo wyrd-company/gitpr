@@ -2,7 +2,7 @@
   "name": "GitPR",
   "image": "mcr.microsoft.com/devcontainers/base:noble",
   "features": {
-    "ghcr.io/devcontainers/features/go:1.4.0": {}
+    "ghcr.io/devcontainers/features/go:1.4.1": {}
   },
   "customizations": {
     "vscode": {
